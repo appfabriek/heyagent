@@ -1022,6 +1022,8 @@ class Bridge {
       return;
     }
 
+    this.requestStopCurrentPrompt('session_switch');
+    this.clearQueuedTelegramMessages();
     this.switchProvider(session.agentType);
     this.setBoundSessionId(session.id);
     this.selectedSessionCwd = session.cwd || null;

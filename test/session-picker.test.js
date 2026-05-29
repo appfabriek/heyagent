@@ -147,3 +147,71 @@ test('handleSessionPickerCallback selects provider session id and cwd', async ()
   assert.equal(sentMessages[0].chatId, 'chat-1');
   assert.match(sentMessages[0].text, /Selected Codex session/);
 });
+
+test('handleSessionPickerCallback stops active prompt and clears queued messages before switching', async () => {
+  const data = {
+    provider: 'claude',
+    claudeArgs: [],
+    codexArgs: [],
+    claudeLastSessionId: 'old-claude-session',
+    codexLastSessionId: null,
+    telegramChatId: 'chat-1',
+  };
+  const config = {
+    get claudeArgs() {
+      return data.claudeArgs;
+    },
+    get codexArgs() {
+      return data.codexArgs;
+    },
+    get claudeLastSessionId() {
+      return data.claudeLastSessionId;
+    },
+    get codexLastSessionId() {
+      return data.codexLastSessionId;
+    },
+    get telegramChatId() {
+      return data.telegramChatId;
+    },
+    get telegramBotUsername() {
+      return null;
+    },
+    set(key, value) {
+      data[key] = value;
+    },
+    setMany(updates) {
+      Object.assign(data, updates);
+    },
+    clearPairing() {},
+  };
+  const bridge = new Bridge(config, 'claude', []);
+  bridge.logCliEvent = () => {};
+  bridge.telegram = {
+    sendMessage() {},
+    answerCallbackQuery() {},
+  };
+  const abortController = new globalThis.AbortController();
+  bridge.activePromptAbortController = abortController;
+  bridge.telegramPendingMessages = ['queued for old session'];
+  bridge.sessionPickerEntries.set(
+    'sess_token',
+    makeSession(1, {
+      agentType: 'codex',
+      id: 'codex-session',
+      cwd: '/Users/geert/code/selected',
+    })
+  );
+
+  await bridge.handleSessionPickerCallback({
+    type: 'callback',
+    callbackQueryId: 'callback-1',
+    data: 'sess_token',
+    chatId: 'chat-1',
+  });
+
+  assert.equal(abortController.signal.aborted, true);
+  assert.equal(bridge.activePromptAbortReason, 'session_switch');
+  assert.deepEqual(bridge.telegramPendingMessages, []);
+  assert.equal(bridge.provider, 'codex');
+  assert.equal(data.codexLastSessionId, 'codex-session');
+});
