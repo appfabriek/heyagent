@@ -20,6 +20,8 @@ const SETUP_MODE_PHONE = 'phone_onboarding';
 const SETUP_MODE_MANUAL = 'manual_fallback';
 const ATTACHMENT_DOWNLOAD_DIR = path.join(os.tmpdir(), 'heyagent-files');
 const DICTATION_HINT_TEXT = 'Hint: for voice input, use your phone keyboard dictation.';
+const SESSION_PICKER_LIMIT = 20;
+const SESSION_BUTTON_MAX_LENGTH = 64;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -60,6 +62,68 @@ function formatProviderName(provider) {
     return 'Codex';
   }
   return String(provider || 'Provider');
+}
+
+function truncateLabel(text, maxLength = SESSION_BUTTON_MAX_LENGTH) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function formatRelativeTime(value, now = new Date()) {
+  const timestamp = new Date(value || 0).getTime();
+  const nowTime = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  if (!Number.isFinite(timestamp) || !Number.isFinite(nowTime) || timestamp <= 0) {
+    return '-';
+  }
+
+  const diffSeconds = Math.max(0, Math.floor((nowTime - timestamp) / 1000));
+  if (diffSeconds < 60) {
+    return 'now';
+  }
+
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) {
+    return `${diffMinutes}m`;
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours}h`;
+  }
+
+  return `${Math.floor(diffHours / 24)}d`;
+}
+
+function formatSessionButtonLabel(session, now = new Date()) {
+  const provider = formatProviderName(session?.agentType || 'provider');
+  const project = String(session?.project || 'unknown').trim() || 'unknown';
+  const relativeTime = formatRelativeTime(session?.lastUserMessageAt, now);
+  const title = String(session?.title || session?.lastUserMessage || session?.id || 'Untitled session').replace(/\s+/g, ' ').trim();
+
+  return truncateLabel(`${provider} | ${project} | ${relativeTime} | ${title}`);
+}
+
+function createSessionKeyboard(sessions, registerToken, options = {}) {
+  const limit = Number.isFinite(options.limit) ? Math.max(0, Number(options.limit)) : SESSION_PICKER_LIMIT;
+  const now = options.now || new Date();
+  const rows = [];
+
+  for (const session of (Array.isArray(sessions) ? sessions : []).slice(0, limit)) {
+    const token = registerToken(session);
+    rows.push([
+      {
+        text: formatSessionButtonLabel(session, now),
+        callback_data: token,
+      },
+    ]);
+  }
+
+  return {
+    inline_keyboard: rows,
+  };
 }
 
 function makePairCode() {
@@ -1118,4 +1182,5 @@ class Bridge {
   }
 }
 
+export { createSessionKeyboard, formatSessionButtonLabel };
 export default Bridge;
