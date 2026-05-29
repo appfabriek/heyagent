@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildSendMessageOptions, normalizeCallback, normalizeMessage } from '../src/telegram-api.js';
+import { TelegramApi, buildSendMessageOptions, normalizeCallback, normalizeMessage } from '../src/telegram-api.js';
 
 test('normalizeMessage keeps text message behavior', () => {
   const message = normalizeMessage({
@@ -81,4 +81,47 @@ test('buildSendMessageOptions includes inline keyboard reply markup', () => {
 
 test('buildSendMessageOptions returns empty object without options', () => {
   assert.deepEqual(buildSendMessageOptions(), {});
+});
+
+test('setCommands forwards bot commands to default and private chat scopes', async () => {
+  const calls = [];
+  const api = Object.create(TelegramApi.prototype);
+  api.bot = {
+    async setMyCommands(commands, options) {
+      calls.push({ commands, options });
+    },
+  };
+  const commands = [
+    { command: 'sessions', description: 'Choose a recent Claude or Codex session' },
+    { command: 'status', description: 'Show current status' },
+  ];
+
+  await api.setCommands(commands);
+
+  assert.deepEqual(calls, [
+    { commands, options: undefined },
+    { commands, options: { scope: { type: 'all_private_chats' } } },
+  ]);
+});
+
+test('setCommands forwards bot commands to a paired chat scope', async () => {
+  const calls = [];
+  const api = Object.create(TelegramApi.prototype);
+  api.bot = {
+    async setMyCommands(commands, options) {
+      calls.push({ commands, options });
+    },
+  };
+  const commands = [
+    { command: 'sessions', description: 'Choose a recent Claude or Codex session' },
+    { command: 'status', description: 'Show current status' },
+  ];
+
+  await api.setCommands(commands, { chatId: '6314031751' });
+
+  assert.deepEqual(calls, [
+    { commands, options: undefined },
+    { commands, options: { scope: { type: 'all_private_chats' } } },
+    { commands, options: { scope: { type: 'chat', chat_id: 6314031751 } } },
+  ]);
 });

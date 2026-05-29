@@ -38,6 +38,23 @@ function findJsonlFiles(dir, maxDepth = 4, depth = 0) {
   return results;
 }
 
+function findJsonFiles(dir, maxDepth = 4, depth = 0) {
+  if (depth > maxDepth) {
+    return [];
+  }
+
+  const results = [];
+  for (const entry of safeReaddir(dir)) {
+    const filePath = join(dir, entry);
+    if (isDirectory(filePath)) {
+      results.push(...findJsonFiles(filePath, maxDepth, depth + 1));
+    } else if (entry.endsWith('.json')) {
+      results.push(filePath);
+    }
+  }
+  return results;
+}
+
 function readJsonLines(filePath) {
   const content = readFileSync(filePath, 'utf8');
   const parsed = [];
@@ -56,6 +73,14 @@ function readJsonLines(filePath) {
   }
 
   return parsed;
+}
+
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 function truncate(text, maxLength) {
@@ -135,7 +160,44 @@ function extractCodexUserText(entry) {
   return typeof textBlock?.text === 'string' ? textBlock.text.trim() : '';
 }
 
-export function parseClaudeSessionFile(filePath, sessionId, projectKey) {
+function readCodexSessionTitles(homeDir) {
+  const titles = new Map();
+  const indexPath = join(homeDir, '.codex', 'session_index.jsonl');
+  if (!existsSync(indexPath)) {
+    return titles;
+  }
+
+  for (const entry of readJsonLines(indexPath)) {
+    const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
+    const title = truncate(entry?.thread_name, 80);
+    if (id && title) {
+      titles.set(id, title);
+    }
+  }
+
+  return titles;
+}
+
+function readClaudeSessionTitles(homeDir) {
+  const titles = new Map();
+  const sessionsDir = join(homeDir, 'Library', 'Application Support', 'Claude', 'claude-code-sessions');
+  if (!existsSync(sessionsDir)) {
+    return titles;
+  }
+
+  for (const filePath of findJsonFiles(sessionsDir)) {
+    const entry = readJsonFile(filePath);
+    const cliSessionId = typeof entry?.cliSessionId === 'string' ? entry.cliSessionId.trim() : '';
+    const title = truncate(entry?.title, 80);
+    if (cliSessionId && title) {
+      titles.set(cliSessionId, title);
+    }
+  }
+
+  return titles;
+}
+
+export function parseClaudeSessionFile(filePath, sessionId, projectKey, options = {}) {
   const entries = readJsonLines(filePath);
   let firstUserText = null;
   let lastUserText = null;
@@ -166,7 +228,7 @@ export function parseClaudeSessionFile(filePath, sessionId, projectKey) {
   return {
     id: sessionId,
     agentType: 'claude',
-    title: truncate(firstUserText, 80),
+    title: truncate(options.title, 80) || truncate(firstUserText, 80),
     lastUserMessage: truncate(lastUserText, 120),
     lastUserMessageAt: lastUserTimestamp,
     project: projectNameFromPath(cwd) || projectKey || null,
@@ -176,7 +238,7 @@ export function parseClaudeSessionFile(filePath, sessionId, projectKey) {
   };
 }
 
-export function parseCodexSessionFile(filePath) {
+export function parseCodexSessionFile(filePath, options = {}) {
   const entries = readJsonLines(filePath);
   let sessionId = null;
   let cwd = null;
@@ -209,7 +271,7 @@ export function parseCodexSessionFile(filePath) {
   return {
     id: sessionId,
     agentType: 'codex',
-    title: truncate(firstUserText, 80),
+    title: truncate(options.title, 80) || truncate(firstUserText, 80),
     lastUserMessage: truncate(lastUserText, 120),
     lastUserMessageAt: lastUserTimestamp,
     project: projectNameFromPath(cwd),
@@ -228,7 +290,7 @@ function isRecentEnough(filePath, maxAgeDays) {
   return Date.now() - stat.mtimeMs <= maxAgeDays * DAY_MS;
 }
 
-async function gatherClaudeSessions(homeDir, maxAgeDays) {
+async function gatherClaudeSessions(homeDir, maxAgeDays, titleIndex = new Map()) {
   const projectsDir = join(homeDir, '.claude', 'projects');
   if (!existsSync(projectsDir)) {
     return [];
@@ -249,7 +311,10 @@ async function gatherClaudeSessions(homeDir, maxAgeDays) {
           continue;
         }
 
-        const session = parseClaudeSessionFile(filePath, basename(file, '.jsonl'), projectKey);
+        const sessionId = basename(file, '.jsonl');
+        const session = parseClaudeSessionFile(filePath, sessionId, projectKey, {
+          title: titleIndex.get(sessionId),
+        });
         if (session) {
           sessions.push(session);
         }
@@ -262,7 +327,7 @@ async function gatherClaudeSessions(homeDir, maxAgeDays) {
   return sessions;
 }
 
-async function gatherCodexSessions(homeDir, maxAgeDays) {
+async function gatherCodexSessions(homeDir, maxAgeDays, titleIndex = new Map()) {
   const sessionsDir = join(homeDir, '.codex', 'sessions');
   if (!existsSync(sessionsDir)) {
     return [];
@@ -277,6 +342,7 @@ async function gatherCodexSessions(homeDir, maxAgeDays) {
 
       const session = parseCodexSessionFile(filePath);
       if (session) {
+        session.title = titleIndex.get(session.id) || session.title;
         sessions.push(session);
       }
     } catch {
@@ -290,7 +356,12 @@ async function gatherCodexSessions(homeDir, maxAgeDays) {
 export async function gatherSessions(options = {}) {
   const homeDir = options.homeDir || homedir();
   const maxAgeDays = Number.isFinite(options.maxAgeDays) ? options.maxAgeDays : DEFAULT_MAX_AGE_DAYS;
-  const results = await Promise.allSettled([gatherClaudeSessions(homeDir, maxAgeDays), gatherCodexSessions(homeDir, maxAgeDays)]);
+  const claudeTitles = readClaudeSessionTitles(homeDir);
+  const codexTitles = readCodexSessionTitles(homeDir);
+  const results = await Promise.allSettled([
+    gatherClaudeSessions(homeDir, maxAgeDays, claudeTitles),
+    gatherCodexSessions(homeDir, maxAgeDays, codexTitles),
+  ]);
   const sessions = [];
 
   for (const result of results) {

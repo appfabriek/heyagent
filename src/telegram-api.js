@@ -224,6 +224,30 @@ class TelegramApi {
     }
   }
 
+  async setCommands(commands, options = {}) {
+    const normalizedCommands = Array.isArray(commands) ? commands : [];
+    const chatId = Number(options.chatId);
+
+    try {
+      await this.bot.setMyCommands(normalizedCommands);
+      await this.bot.setMyCommands(normalizedCommands, {
+        scope: {
+          type: 'all_private_chats',
+        },
+      });
+      if (Number.isFinite(chatId)) {
+        await this.bot.setMyCommands(normalizedCommands, {
+          scope: {
+            type: 'chat',
+            chat_id: chatId,
+          },
+        });
+      }
+    } catch (error) {
+      throw toTelegramError(error, 'Failed to configure Telegram bot commands');
+    }
+  }
+
   async ensurePollingMode() {
     try {
       await this.bot.deleteWebHook({

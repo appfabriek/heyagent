@@ -87,6 +87,80 @@ test('parseClaudeSessionFile ignores corrupt lines and returns last user message
   assert.equal(session.cwd, '/Users/geert/code/myproject');
 });
 
+test('gatherSessions uses Codex thread names from session index', async () => {
+  const homeDir = await makeHome();
+  const codexFile = path.join(homeDir, '.codex', 'sessions', '2026', '05', '29', 'codex-title.jsonl');
+  const indexFile = path.join(homeDir, '.codex', 'session_index.jsonl');
+
+  await writeJsonl(codexFile, [
+    {
+      type: 'session_meta',
+      timestamp: '2026-05-29T09:00:00.000Z',
+      payload: {
+        id: 'codex-title',
+        cwd: '/Users/geert/code/heyagent',
+      },
+    },
+    {
+      type: 'response_item',
+      timestamp: '2026-05-29T10:00:00.000Z',
+      payload: {
+        role: 'user',
+        content: [{ type: 'input_text', text: '# AGENTS.md instructions for /Users/geert/code/heyagent' }],
+      },
+    },
+  ]);
+  await writeJsonl(indexFile, [
+    {
+      id: 'codex-title',
+      thread_name: 'Voeg sessiekeuze toe',
+      updated_at: '2026-05-29T10:00:00.000Z',
+    },
+  ]);
+
+  const sessions = await gatherSessions({ homeDir, maxAgeDays: 3650 });
+
+  assert.equal(sessions[0].id, 'codex-title');
+  assert.equal(sessions[0].title, 'Voeg sessiekeuze toe');
+});
+
+test('gatherSessions uses Claude Desktop local session titles', async () => {
+  const homeDir = await makeHome();
+  const claudeFile = path.join(homeDir, '.claude', 'projects', '-Users-geert-code-bvgeert', 'claude-title.jsonl');
+  const localSessionFile = path.join(
+    homeDir,
+    'Library',
+    'Application Support',
+    'Claude',
+    'claude-code-sessions',
+    'workspace',
+    'project',
+    'local-session.json'
+  );
+
+  await writeJsonl(claudeFile, [
+    {
+      type: 'user',
+      timestamp: '2026-05-29T08:00:00.000Z',
+      message: { content: 'pull' },
+    },
+  ]);
+  await mkdir(path.dirname(localSessionFile), { recursive: true });
+  await writeFile(
+    localSessionFile,
+    JSON.stringify({
+      sessionId: 'local-1',
+      cliSessionId: 'claude-title',
+      title: 'Telegram plugin installation',
+    })
+  );
+
+  const sessions = await gatherSessions({ homeDir, maxAgeDays: 3650 });
+
+  assert.equal(sessions[0].id, 'claude-title');
+  assert.equal(sessions[0].title, 'Telegram plugin installation');
+});
+
 test('parseCodexSessionFile skips sessions without a user message', async () => {
   const homeDir = await makeHome();
   const filePath = path.join(homeDir, 'codex.jsonl');

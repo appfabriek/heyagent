@@ -23,6 +23,17 @@ const ATTACHMENT_DOWNLOAD_DIR = path.join(os.tmpdir(), 'heyagent-files');
 const DICTATION_HINT_TEXT = 'Hint: for voice input, use your phone keyboard dictation.';
 const SESSION_PICKER_LIMIT = 20;
 const SESSION_BUTTON_MAX_LENGTH = 64;
+const TELEGRAM_POLL_TIMEOUT_SECONDS = 2;
+const TELEGRAM_BOT_COMMANDS = [
+  { command: 'help', description: 'Show command list' },
+  { command: 'new', description: 'Start a fresh session' },
+  { command: 'stop', description: 'Stop current execution' },
+  { command: 'claude', description: 'Switch to Claude' },
+  { command: 'codex', description: 'Switch to Codex' },
+  { command: 'sessions', description: 'Choose recent Claude or Codex sessions' },
+  { command: 'sessies', description: 'Kies recente Claude- en Codex-sessies' },
+  { command: 'status', description: 'Show current status' },
+];
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -102,13 +113,63 @@ function formatRelativeTime(value, now = new Date()) {
 
 function formatSessionButtonLabel(session, now = new Date()) {
   const provider = formatProviderName(session?.agentType || 'provider');
-  const project = String(session?.project || 'unknown').trim() || 'unknown';
+  const project = normalizeProjectName(session?.project);
   const relativeTime = formatRelativeTime(session?.lastUserMessageAt, now);
   const title = String(session?.title || session?.lastUserMessage || session?.id || 'Untitled session')
     .replace(/\s+/g, ' ')
     .trim();
 
-  return truncateLabel(`${provider} | ${project} | ${relativeTime} | ${title}`);
+  return truncateLabel(`${title} | ${provider} | ${project} | ${relativeTime}`);
+}
+
+function normalizeProjectName(project) {
+  return String(project || 'unknown').trim() || 'unknown';
+}
+
+function normalizeCommandName(command) {
+  return String(command || '')
+    .toLowerCase()
+    .split('@')[0];
+}
+
+function groupSessionsByProject(sessions, options = {}) {
+  const limit = Number.isFinite(options.limit) ? Math.max(0, Number(options.limit)) : SESSION_PICKER_LIMIT;
+  const groupsByProject = new Map();
+
+  for (const session of (Array.isArray(sessions) ? sessions : []).slice(0, limit)) {
+    const project = normalizeProjectName(session?.project);
+    if (!groupsByProject.has(project)) {
+      groupsByProject.set(project, {
+        project,
+        sessions: [],
+      });
+    }
+    groupsByProject.get(project).sessions.push(session);
+  }
+
+  return [...groupsByProject.values()];
+}
+
+function formatProjectSessionButtonLabel(session, now = new Date()) {
+  const provider = formatProviderName(session?.agentType || 'provider');
+  const project = normalizeProjectName(session?.project);
+  const relativeTime = formatRelativeTime(session?.lastUserMessageAt, now);
+  const title = String(session?.title || session?.lastUserMessage || session?.id || 'Untitled session')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return truncateLabel(`${title} | ${provider} | ${project} | ${relativeTime}`);
+}
+
+function formatProjectButtonLabel(group, now = new Date()) {
+  const sessions = Array.isArray(group?.sessions) ? group.sessions : [];
+  const newestSession = sessions[0] || {};
+  const project = normalizeProjectName(group?.project || newestSession.project);
+  const relativeTime = formatRelativeTime(newestSession.lastUserMessageAt, now);
+  const count = sessions.length;
+  const suffix = count === 1 ? 'sessie' : 'sessies';
+
+  return truncateLabel(`${project} | ${count} ${suffix} | nieuwste ${relativeTime}`);
 }
 
 function createSessionKeyboard(sessions, registerToken, options = {}) {
@@ -122,6 +183,35 @@ function createSessionKeyboard(sessions, registerToken, options = {}) {
       {
         text: formatSessionButtonLabel(session, now),
         callback_data: token,
+      },
+    ]);
+  }
+
+  return {
+    inline_keyboard: rows,
+  };
+}
+
+function createSessionProjectKeyboard(sessions, registerSessionToken, registerProjectToken, options = {}) {
+  const now = options.now || new Date();
+  const rows = [];
+
+  for (const group of groupSessionsByProject(sessions, options)) {
+    if (group.sessions.length === 1) {
+      const session = group.sessions[0];
+      rows.push([
+        {
+          text: formatProjectSessionButtonLabel(session, now),
+          callback_data: registerSessionToken(session),
+        },
+      ]);
+      continue;
+    }
+
+    rows.push([
+      {
+        text: formatProjectButtonLabel(group, now),
+        callback_data: registerProjectToken(group),
       },
     ]);
   }
@@ -222,6 +312,7 @@ class Bridge {
     this.telegramPendingMessages = [];
     this.telegramDispatchScheduled = false;
     this.sessionPickerEntries = new Map();
+    this.sessionPickerProjectEntries = new Map();
     this.sessionPickerCounter = 0;
     this.selectedSessionCwd = null;
 
@@ -439,7 +530,7 @@ class Bridge {
           '/stop - stop current execution and clear queued Telegram messages',
           '/claude - switch to Claude provider',
           '/codex - switch to Codex provider',
-          '/sessions - choose a recent Claude or Codex session in Telegram',
+          '/sessions or /sessies - choose a recent Claude or Codex session in Telegram',
           '/say <text> - send a raw message to Telegram',
           '/ask <prompt> - run prompt through provider and send response to Telegram',
           '/exit - stop HeyAgent',
@@ -487,7 +578,7 @@ class Bridge {
       return;
     }
 
-    if (line === '/sessions') {
+    if (line === '/sessions' || line === '/sessies') {
       await this.showSessionPicker();
       return;
     }
@@ -713,6 +804,8 @@ class Bridge {
         this.config.clearPairing();
       }
 
+      await this.configureTelegramCommands(telegram);
+
       return true;
     } catch (error) {
       if (error instanceof TelegramApiError && error.status === 401) {
@@ -721,6 +814,18 @@ class Bridge {
         console.error(`Token validation failed: ${error.message}`);
       }
       return false;
+    }
+  }
+
+  async configureTelegramCommands(telegram = this.telegram) {
+    if (!telegram || typeof telegram.setCommands !== 'function') {
+      return;
+    }
+
+    try {
+      await telegram.setCommands(TELEGRAM_BOT_COMMANDS, { chatId: this.config.telegramChatId });
+    } catch (error) {
+      this.logger.warn(`Failed to configure Telegram bot commands: ${error.message}`);
     }
   }
 
@@ -969,6 +1074,17 @@ class Bridge {
     return token;
   }
 
+  registerSessionPickerProject(group) {
+    const tokenNonce = crypto
+      .randomBytes(4)
+      .toString('base64url')
+      .replace(/[^a-zA-Z0-9_-]/g, '');
+    const token = `proj_${Date.now().toString(36)}_${this.sessionPickerCounter.toString(36)}_${tokenNonce}`;
+    this.sessionPickerCounter += 1;
+    this.sessionPickerProjectEntries.set(token, group);
+    return token;
+  }
+
   async showSessionPicker() {
     this.logCliEvent('Session picker', 'loading recent Claude and Codex sessions');
     const sessions = await gatherSessions();
@@ -980,8 +1096,17 @@ class Bridge {
     }
 
     this.sessionPickerEntries.clear();
-    const replyMarkup = createSessionKeyboard(recentSessions, session => this.registerSessionPickerEntry(session));
-    await this.safeSendMessage(`Kies een sessie om te hervatten (${recentSessions.length} meest recente):`, { replyMarkup });
+    this.sessionPickerProjectEntries.clear();
+    const groups = groupSessionsByProject(recentSessions, { limit: SESSION_PICKER_LIMIT });
+    const replyMarkup = createSessionProjectKeyboard(
+      recentSessions,
+      session => this.registerSessionPickerEntry(session),
+      group => this.registerSessionPickerProject(group),
+      { limit: SESSION_PICKER_LIMIT }
+    );
+    await this.safeSendMessage(`Kies een project of sessie (${recentSessions.length} meest recente, ${groups.length} projecten):`, {
+      replyMarkup,
+    });
   }
 
   async answerCallback(callbackQueryId, text = '') {
@@ -998,12 +1123,52 @@ class Bridge {
 
   async handleCallback(callback) {
     const data = String(callback?.data || '').trim();
+    if (data.startsWith('proj_')) {
+      await this.handleSessionProjectCallback(callback);
+      return;
+    }
+
     if (!data.startsWith('sess_')) {
       await this.answerCallback(callback.callbackQueryId);
       return;
     }
 
     await this.handleSessionPickerCallback(callback);
+  }
+
+  async handleSessionProjectCallback(callback) {
+    const token = String(callback?.data || '').trim();
+    const group = this.sessionPickerProjectEntries.get(token);
+
+    if (!group) {
+      await this.answerCallback(callback.callbackQueryId, 'Project verlopen');
+      await this.safeSendMessage('Deze projectkeuze is verlopen. Stuur opnieuw /sessions.');
+      return;
+    }
+
+    const sessions = Array.isArray(group.sessions) ? group.sessions : [];
+    if (sessions.length === 0) {
+      await this.answerCallback(callback.callbackQueryId, 'Geen sessies');
+      await this.safeSendMessage('Geen sessies gevonden voor dit project. Stuur opnieuw /sessions.');
+      return;
+    }
+
+    if (sessions.length === 1) {
+      const sessionToken = this.registerSessionPickerEntry(sessions[0]);
+      await this.handleSessionPickerCallback({
+        ...callback,
+        data: sessionToken,
+      });
+      return;
+    }
+
+    this.sessionPickerEntries.clear();
+    const project = normalizeProjectName(group.project);
+    const replyMarkup = createSessionKeyboard(sessions, session => this.registerSessionPickerEntry(session), {
+      limit: SESSION_PICKER_LIMIT,
+    });
+    await this.answerCallback(callback.callbackQueryId, project);
+    await this.safeSendMessage(`Kies een sessie voor ${project} (${sessions.length} van de 20 meest recente):`, { replyMarkup });
   }
 
   async handleSessionPickerCallback(callback) {
@@ -1051,7 +1216,7 @@ class Bridge {
     }
 
     try {
-      const result = await this.telegram.getUpdates(cursor, 20);
+      const result = await this.telegram.getUpdates(cursor, TELEGRAM_POLL_TIMEOUT_SECONDS);
       const nextCursor = Number.isFinite(result.nextCursor) ? result.nextCursor : cursor;
       if (nextCursor > cursor) {
         this.config.set('telegramUpdateCursor', nextCursor);
@@ -1174,7 +1339,7 @@ class Bridge {
       .trim()
       .split(/\s+/)
       .filter(Boolean);
-    const command = String(parts[0] || '').toLowerCase();
+    const command = normalizeCommandName(parts[0]);
     const argument = parts.slice(1).join(' ').trim();
 
     if (command === '/help') {
@@ -1186,7 +1351,7 @@ class Bridge {
           '/stop - stop current execution and clear queued messages',
           '/claude - switch to Claude provider',
           '/codex - switch to Codex provider',
-          '/sessions - choose a recent Claude or Codex session',
+          '/sessions or /sessies - choose a recent Claude or Codex session',
           '/status - show current status',
           '',
           `Send any normal message to talk to ${this.provider}.`,
@@ -1212,7 +1377,7 @@ class Bridge {
       return;
     }
 
-    if (command === '/sessions') {
+    if (command === '/sessions' || command === '/sessies') {
       await this.showSessionPicker();
       return;
     }
@@ -1296,5 +1461,5 @@ class Bridge {
   }
 }
 
-export { createSessionKeyboard, formatSessionButtonLabel };
+export { createSessionKeyboard, createSessionProjectKeyboard, formatSessionButtonLabel, groupSessionsByProject };
 export default Bridge;
