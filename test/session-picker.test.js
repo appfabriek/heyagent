@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createSessionKeyboard, formatSessionButtonLabel } from '../src/bridge.js';
+import Bridge, { createSessionKeyboard, formatSessionButtonLabel } from '../src/bridge.js';
 
 function makeSession(index, overrides = {}) {
   return {
@@ -72,4 +72,78 @@ test('createSessionKeyboard limits to 20 sessions and registers callback tokens'
   assert.equal(keyboard.inline_keyboard[19][0].callback_data, 'sess_session-20');
   assert.equal(registered.size, 20);
   assert.equal(registered.get('sess_session-1').id, 'session-1');
+});
+
+test('handleSessionPickerCallback selects provider session id and cwd', async () => {
+  const data = {
+    provider: 'claude',
+    claudeArgs: [],
+    codexArgs: [],
+    claudeLastSessionId: null,
+    codexLastSessionId: null,
+    telegramChatId: 'chat-1',
+  };
+  const sentMessages = [];
+  const answeredCallbacks = [];
+  const config = {
+    get claudeArgs() {
+      return data.claudeArgs;
+    },
+    get codexArgs() {
+      return data.codexArgs;
+    },
+    get claudeLastSessionId() {
+      return data.claudeLastSessionId;
+    },
+    get codexLastSessionId() {
+      return data.codexLastSessionId;
+    },
+    get telegramChatId() {
+      return data.telegramChatId;
+    },
+    get telegramBotUsername() {
+      return null;
+    },
+    set(key, value) {
+      data[key] = value;
+    },
+    setMany(updates) {
+      Object.assign(data, updates);
+    },
+    clearPairing() {},
+  };
+  const bridge = new Bridge(config, 'claude', []);
+  bridge.logCliEvent = () => {};
+  bridge.telegram = {
+    sendMessage(chatId, text) {
+      sentMessages.push({ chatId, text });
+    },
+    answerCallbackQuery(callbackQueryId, text) {
+      answeredCallbacks.push({ callbackQueryId, text });
+    },
+  };
+  const session = makeSession(1, {
+    agentType: 'codex',
+    id: 'codex-session',
+    cwd: '/Users/geert/code/selected',
+    project: 'selected',
+    title: 'Selected work',
+  });
+  bridge.sessionPickerEntries.set('sess_token', session);
+
+  await bridge.handleSessionPickerCallback({
+    type: 'callback',
+    callbackQueryId: 'callback-1',
+    data: 'sess_token',
+    chatId: 'chat-1',
+  });
+
+  assert.equal(bridge.provider, 'codex');
+  assert.equal(data.provider, 'codex');
+  assert.equal(data.codexLastSessionId, 'codex-session');
+  assert.equal(bridge.selectedSessionCwd, '/Users/geert/code/selected');
+  assert.equal(bridge.forceNewNextPrompt, false);
+  assert.deepEqual(answeredCallbacks, [{ callbackQueryId: 'callback-1', text: 'Codex geselecteerd' }]);
+  assert.equal(sentMessages[0].chatId, 'chat-1');
+  assert.match(sentMessages[0].text, /Selected Codex session/);
 });

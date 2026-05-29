@@ -11,10 +11,7 @@ async function makeHome() {
 
 async function writeJsonl(filePath, entries) {
   await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(
-    filePath,
-    entries.map(entry => (typeof entry === 'string' ? entry : JSON.stringify(entry))).join('\n')
-  );
+  await writeFile(filePath, entries.map(entry => (typeof entry === 'string' ? entry : JSON.stringify(entry))).join('\n'));
 }
 
 test('gatherSessions combines Claude and Codex sessions sorted newest first', async () => {

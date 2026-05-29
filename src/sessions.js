@@ -114,9 +114,7 @@ function extractClaudeUserTexts(entry) {
     return [];
   }
 
-  return content
-    .filter(block => block?.type === 'text' && typeof block.text === 'string' && block.text.trim())
-    .map(block => block.text.trim());
+  return content.filter(block => block?.type === 'text' && typeof block.text === 'string' && block.text.trim()).map(block => block.text.trim());
 }
 
 function extractCodexUserText(entry) {

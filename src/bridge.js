@@ -14,6 +14,7 @@ import { runClaudePrompt } from './providers/claude-provider.js';
 import { runCodexPrompt } from './providers/codex-provider.js';
 import { applyDefaultBypassArgs } from './args.js';
 import { formatSleepInhibitorStatus, startSleepInhibitor } from './sleep-inhibitor.js';
+import { gatherSessions } from './sessions.js';
 
 const BOTFATHER_URL = 'https://t.me/BotFather';
 const SETUP_MODE_PHONE = 'phone_onboarding';
@@ -65,7 +66,9 @@ function formatProviderName(provider) {
 }
 
 function truncateLabel(text, maxLength = SESSION_BUTTON_MAX_LENGTH) {
-  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  const value = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (value.length <= maxLength) {
     return value;
   }
@@ -101,7 +104,9 @@ function formatSessionButtonLabel(session, now = new Date()) {
   const provider = formatProviderName(session?.agentType || 'provider');
   const project = String(session?.project || 'unknown').trim() || 'unknown';
   const relativeTime = formatRelativeTime(session?.lastUserMessageAt, now);
-  const title = String(session?.title || session?.lastUserMessage || session?.id || 'Untitled session').replace(/\s+/g, ' ').trim();
+  const title = String(session?.title || session?.lastUserMessage || session?.id || 'Untitled session')
+    .replace(/\s+/g, ' ')
+    .trim();
 
   return truncateLabel(`${provider} | ${project} | ${relativeTime} | ${title}`);
 }
@@ -138,7 +143,7 @@ function makePairCode() {
   }
 }
 
-function buildStatusText(config, provider, providerArgs = [], sleepInhibitorState = null) {
+function buildStatusText(config, provider, providerArgs = [], sleepInhibitorState = null, selectedSessionCwd = null) {
   const bot = config.telegramBotUsername ? `@${config.telegramBotUsername}` : 'not set';
   const sessionId = getCurrentSessionId(config, provider);
   const argsText = Array.isArray(providerArgs) && providerArgs.length > 0 ? providerArgs.join(' ') : '(none)';
@@ -148,10 +153,13 @@ function buildStatusText(config, provider, providerArgs = [], sleepInhibitorStat
     `Args: ${argsText}`,
     `Sleep prevention: ${sleepStatus}`,
     `Directory: ${process.cwd()}`,
+    selectedSessionCwd ? `Selected session directory: ${selectedSessionCwd}` : null,
     `Bot: ${bot}`,
     `Chat: ${config.telegramChatId || 'not paired'}`,
     `Session: ${sessionId || '-'}`,
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function isPairStartMessage(text, code) {
@@ -213,6 +221,9 @@ class Bridge {
     this.activePromptAbortReason = null;
     this.telegramPendingMessages = [];
     this.telegramDispatchScheduled = false;
+    this.sessionPickerEntries = new Map();
+    this.sessionPickerCounter = 0;
+    this.selectedSessionCwd = null;
 
     this.onSignal = () => {
       this.requestStopCurrentPrompt('shutdown');
@@ -335,6 +346,7 @@ class Bridge {
     const sourceLabel = source === 'cli' ? 'CLI' : 'Telegram';
     const args = splitArgs(rawArgs);
     const effective = this.switchProvider(provider);
+    this.selectedSessionCwd = null;
     const sessionId = this.getBoundSessionId() || '-';
     const argsText = effective.providerArgs.length > 0 ? effective.providerArgs.join(' ') : '(none)';
 
@@ -427,6 +439,7 @@ class Bridge {
           '/stop - stop current execution and clear queued Telegram messages',
           '/claude - switch to Claude provider',
           '/codex - switch to Codex provider',
+          '/sessions - choose a recent Claude or Codex session in Telegram',
           '/say <text> - send a raw message to Telegram',
           '/ask <prompt> - run prompt through provider and send response to Telegram',
           '/exit - stop HeyAgent',
@@ -438,7 +451,7 @@ class Bridge {
     }
 
     if (line === '/status') {
-      this.writeCliLine(buildStatusText(this.config, this.provider, this.providerArgs, this.sleepInhibitorState));
+      this.writeCliLine(buildStatusText(this.config, this.provider, this.providerArgs, this.sleepInhibitorState, this.selectedSessionCwd));
       return;
     }
 
@@ -471,6 +484,11 @@ class Bridge {
     if (line === '/codex' || line.startsWith('/codex ')) {
       const argument = line.slice('/codex'.length).trim();
       await this.handleProviderSwitchCommand('codex', argument, 'cli');
+      return;
+    }
+
+    if (line === '/sessions') {
+      await this.showSessionPicker();
       return;
     }
 
@@ -717,6 +735,7 @@ class Bridge {
     }
 
     this.forceNewNextPrompt = true;
+    this.selectedSessionCwd = null;
     this.config.setMany(updates);
   }
 
@@ -939,6 +958,87 @@ class Bridge {
     throw new Error('Pairing cancelled');
   }
 
+  registerSessionPickerEntry(session) {
+    const tokenNonce = crypto
+      .randomBytes(4)
+      .toString('base64url')
+      .replace(/[^a-zA-Z0-9_-]/g, '');
+    const token = `sess_${Date.now().toString(36)}_${this.sessionPickerCounter.toString(36)}_${tokenNonce}`;
+    this.sessionPickerCounter += 1;
+    this.sessionPickerEntries.set(token, session);
+    return token;
+  }
+
+  async showSessionPicker() {
+    this.logCliEvent('Session picker', 'loading recent Claude and Codex sessions');
+    const sessions = await gatherSessions();
+    const recentSessions = sessions.slice(0, SESSION_PICKER_LIMIT);
+
+    if (recentSessions.length === 0) {
+      await this.safeSendMessage('Geen Claude- of Codex-sessies gevonden.');
+      return;
+    }
+
+    this.sessionPickerEntries.clear();
+    const replyMarkup = createSessionKeyboard(recentSessions, session => this.registerSessionPickerEntry(session));
+    await this.safeSendMessage(`Kies een sessie om te hervatten (${recentSessions.length} meest recente):`, { replyMarkup });
+  }
+
+  async answerCallback(callbackQueryId, text = '') {
+    if (!this.telegram || !callbackQueryId) {
+      return;
+    }
+
+    try {
+      await this.telegram.answerCallbackQuery(callbackQueryId, text);
+    } catch (error) {
+      this.logger.warn(`Failed to answer Telegram callback: ${error.message}`);
+    }
+  }
+
+  async handleCallback(callback) {
+    const data = String(callback?.data || '').trim();
+    if (!data.startsWith('sess_')) {
+      await this.answerCallback(callback.callbackQueryId);
+      return;
+    }
+
+    await this.handleSessionPickerCallback(callback);
+  }
+
+  async handleSessionPickerCallback(callback) {
+    const token = String(callback?.data || '').trim();
+    const session = this.sessionPickerEntries.get(token);
+
+    if (!session) {
+      await this.answerCallback(callback.callbackQueryId, 'Sessie verlopen');
+      await this.safeSendMessage('Deze sessiekeuze is verlopen. Stuur opnieuw /sessions.');
+      return;
+    }
+
+    if (session.agentType !== 'claude' && session.agentType !== 'codex') {
+      await this.answerCallback(callback.callbackQueryId, 'Onbekende provider');
+      await this.safeSendMessage(`Unsupported session provider: ${session.agentType || 'unknown'}`);
+      return;
+    }
+
+    this.switchProvider(session.agentType);
+    this.setBoundSessionId(session.id);
+    this.selectedSessionCwd = session.cwd || null;
+    this.forceNewNextPrompt = false;
+    this.sessionPickerEntries.delete(token);
+
+    const providerLabel = formatProviderName(session.agentType);
+    const project = session.project || 'unknown';
+    const title = session.title || session.lastUserMessage || session.id;
+    await this.answerCallback(callback.callbackQueryId, `${providerLabel} geselecteerd`);
+    await this.safeSendMessage(
+      [`Selected ${providerLabel} session.`, `Project: ${project}`, `Session: ${session.id}`, title ? `Title: ${title}` : null]
+        .filter(Boolean)
+        .join('\n')
+    );
+  }
+
   async pollOnce() {
     const chatId = this.config.telegramChatId;
     const chatUserId = this.config.telegramChatUserId;
@@ -965,6 +1065,11 @@ class Bridge {
         }
 
         if (chatUserId && message.userId && message.userId !== chatUserId) {
+          continue;
+        }
+
+        if (message.type === 'callback') {
+          await this.handleCallback(message);
           continue;
         }
 
@@ -1079,6 +1184,7 @@ class Bridge {
           '/stop - stop current execution and clear queued messages',
           '/claude - switch to Claude provider',
           '/codex - switch to Codex provider',
+          '/sessions - choose a recent Claude or Codex session',
           '/status - show current status',
           '',
           `Send any normal message to talk to ${this.provider}.`,
@@ -1104,8 +1210,13 @@ class Bridge {
       return;
     }
 
+    if (command === '/sessions') {
+      await this.showSessionPicker();
+      return;
+    }
+
     if (command === '/status') {
-      await this.safeSendMessage(buildStatusText(this.config, this.provider, this.providerArgs, this.sleepInhibitorState));
+      await this.safeSendMessage(buildStatusText(this.config, this.provider, this.providerArgs, this.sleepInhibitorState, this.selectedSessionCwd));
       return;
     }
 
@@ -1128,12 +1239,13 @@ class Bridge {
 
   async runProvider(prompt, resume, options = {}) {
     const abortSignal = options.abortSignal || null;
+    const cwd = this.selectedSessionCwd || process.cwd();
 
     if (this.provider === 'claude') {
       return runClaudePrompt(prompt, {
         resume,
         extraArgs: this.providerArgs,
-        cwd: process.cwd(),
+        cwd,
         abortSignal,
         sessionId: this.config.claudeLastSessionId,
         onSessionId: sessionId => {
@@ -1146,7 +1258,7 @@ class Bridge {
       return runCodexPrompt(prompt, {
         resume,
         extraArgs: this.providerArgs,
-        cwd: process.cwd(),
+        cwd,
         abortSignal,
         sessionId: this.config.codexLastSessionId,
         onSessionId: sessionId => {
@@ -1169,7 +1281,7 @@ class Bridge {
     this.logCliEvent(`${from} -> Telegram`, text);
 
     try {
-      await this.telegram.sendMessage(chatId, text);
+      await this.telegram.sendMessage(chatId, text, options);
     } catch (error) {
       this.logger.error(`Outbox send failed: ${error.message}`);
 
