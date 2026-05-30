@@ -17,33 +17,29 @@ function makeSession(index, overrides = {}) {
   };
 }
 
-test('formatSessionButtonLabel puts the session title first', () => {
+test('formatSessionButtonLabel shows title and provider in parentheses', () => {
   const label = formatSessionButtonLabel(
     makeSession(1, {
       agentType: 'claude',
       project: 'heyagent',
       title: 'Add Telegram session picker support',
-      lastUserMessageAt: '2026-05-29T09:50:00.000Z',
-    }),
-    new Date('2026-05-29T10:02:00.000Z')
+    })
   );
 
-  assert.equal(label, 'Add Telegram session picker support | Claude | heyagent | 12m');
+  assert.equal(label, 'Add Telegram session picker support (Claude)');
 });
 
-test('formatSessionButtonLabel falls back to last user message and unknown project', () => {
+test('formatSessionButtonLabel falls back to last user message', () => {
   const label = formatSessionButtonLabel(
     makeSession(2, {
       agentType: 'codex',
       project: null,
       title: null,
       lastUserMessage: 'Continue from here',
-      lastUserMessageAt: '2026-05-29T08:02:00.000Z',
-    }),
-    new Date('2026-05-29T10:02:00.000Z')
+    })
   );
 
-  assert.equal(label, 'Continue from here | Codex | unknown | 2h');
+  assert.equal(label, 'Continue from here (Codex)');
 });
 
 test('formatSessionButtonLabel truncates long labels', () => {
@@ -94,58 +90,33 @@ test('groupSessionsByProject limits before grouping and keeps newest project fir
   );
 });
 
-test('createSessionProjectKeyboard opens multi-session projects and directly selects single-session projects', () => {
+test('createSessionProjectKeyboard renders every project as a project button with session count', () => {
   const registeredProjects = new Map();
-  const registeredSessions = new Map();
   const sessions = [
-    makeSession(1, {
-      id: 'alpha-new',
-      project: 'alpha',
-      agentType: 'claude',
-      title: 'New alpha work',
-      lastUserMessageAt: '2026-05-29T09:50:00.000Z',
-    }),
-    makeSession(2, {
-      id: 'beta-only',
-      project: 'beta',
-      agentType: 'codex',
-      title: 'Only beta work',
-      lastUserMessageAt: '2026-05-29T09:45:00.000Z',
-    }),
-    makeSession(3, {
-      id: 'alpha-old',
-      project: 'alpha',
-      agentType: 'codex',
-      title: 'Older alpha work',
-      lastUserMessageAt: '2026-05-29T09:20:00.000Z',
-    }),
+    makeSession(1, { id: 'alpha-new', project: 'alpha', agentType: 'claude', title: 'New alpha work' }),
+    makeSession(2, { id: 'beta-only', project: 'beta', agentType: 'codex', title: 'Only beta work' }),
+    makeSession(3, { id: 'alpha-old', project: 'alpha', agentType: 'codex', title: 'Older alpha work' }),
   ];
 
-  const keyboard = createSessionProjectKeyboard(
-    sessions,
-    session => {
-      const token = `sess_${session.id}`;
-      registeredSessions.set(token, session);
-      return token;
-    },
-    group => {
-      const token = `proj_${group.project}`;
-      registeredProjects.set(token, group);
-      return token;
-    },
-    { now: new Date('2026-05-29T10:02:00.000Z') }
-  );
+  const keyboard = createSessionProjectKeyboard(sessions, group => {
+    const token = `proj_${group.project}`;
+    registeredProjects.set(token, group);
+    return token;
+  });
 
   assert.equal(keyboard.inline_keyboard.length, 2);
   assert.equal(keyboard.inline_keyboard[0][0].callback_data, 'proj_alpha');
-  assert.match(keyboard.inline_keyboard[0][0].text, /^alpha \| 2 sessies \| nieuwste 12m/);
-  assert.equal(keyboard.inline_keyboard[1][0].callback_data, 'sess_beta-only');
-  assert.match(keyboard.inline_keyboard[1][0].text, /^Only beta work \| Codex \| beta \| 17m/);
+  assert.equal(keyboard.inline_keyboard[0][0].text, 'alpha (2)');
+  assert.equal(keyboard.inline_keyboard[1][0].callback_data, 'proj_beta');
+  assert.equal(keyboard.inline_keyboard[1][0].text, 'beta (1)');
   assert.deepEqual(
     registeredProjects.get('proj_alpha').sessions.map(session => session.id),
     ['alpha-new', 'alpha-old']
   );
-  assert.equal(registeredSessions.get('sess_beta-only').id, 'beta-only');
+  assert.deepEqual(
+    registeredProjects.get('proj_beta').sessions.map(session => session.id),
+    ['beta-only']
+  );
 });
 
 test('handleSessionPickerCallback selects provider session id and cwd', async () => {
@@ -436,7 +407,7 @@ test('handleCommand accepts Dutch sessions alias', async () => {
   assert.equal(showSessionPickerCalls, 1);
 });
 
-test('configureTelegramCommands registers session commands for the paired chat', async () => {
+test('configureTelegramCommands registers one short session menu command for the paired chat', async () => {
   const config = {
     get claudeArgs() {
       return [];
@@ -471,8 +442,9 @@ test('configureTelegramCommands registers session commands for the paired chat',
 
   assert.deepEqual(
     calls[0].commands.map(command => command.command),
-    ['help', 'new', 'stop', 'claude', 'codex', 'sessions', 'sessies', 'status']
+    ['help', 'new', 'stop', 'claude', 'codex', 'sessions', 'status']
   );
+  assert.equal(calls[0].commands.find(command => command.command === 'sessions')?.description, 'Choose session');
   assert.deepEqual(calls[0].options, { chatId: '6314031751' });
 });
 

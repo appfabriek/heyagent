@@ -30,8 +30,7 @@ const TELEGRAM_BOT_COMMANDS = [
   { command: 'stop', description: 'Stop current execution' },
   { command: 'claude', description: 'Switch to Claude' },
   { command: 'codex', description: 'Switch to Codex' },
-  { command: 'sessions', description: 'Choose recent Claude or Codex sessions' },
-  { command: 'sessies', description: 'Kies recente Claude- en Codex-sessies' },
+  { command: 'sessions', description: 'Choose session' },
   { command: 'status', description: 'Show current status' },
 ];
 
@@ -86,40 +85,13 @@ function truncateLabel(text, maxLength = SESSION_BUTTON_MAX_LENGTH) {
   return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
-function formatRelativeTime(value, now = new Date()) {
-  const timestamp = new Date(value || 0).getTime();
-  const nowTime = now instanceof Date ? now.getTime() : new Date(now).getTime();
-  if (!Number.isFinite(timestamp) || !Number.isFinite(nowTime) || timestamp <= 0) {
-    return '-';
-  }
-
-  const diffSeconds = Math.max(0, Math.floor((nowTime - timestamp) / 1000));
-  if (diffSeconds < 60) {
-    return 'now';
-  }
-
-  const diffMinutes = Math.floor(diffSeconds / 60);
-  if (diffMinutes < 60) {
-    return `${diffMinutes}m`;
-  }
-
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) {
-    return `${diffHours}h`;
-  }
-
-  return `${Math.floor(diffHours / 24)}d`;
-}
-
-function formatSessionButtonLabel(session, now = new Date()) {
+function formatSessionButtonLabel(session) {
   const provider = formatProviderName(session?.agentType || 'provider');
-  const project = normalizeProjectName(session?.project);
-  const relativeTime = formatRelativeTime(session?.lastUserMessageAt, now);
   const title = String(session?.title || session?.lastUserMessage || session?.id || 'Untitled session')
     .replace(/\s+/g, ' ')
     .trim();
 
-  return truncateLabel(`${title} | ${provider} | ${project} | ${relativeTime}`);
+  return truncateLabel(`${title} (${provider})`);
 }
 
 function normalizeProjectName(project) {
@@ -150,38 +122,22 @@ function groupSessionsByProject(sessions, options = {}) {
   return [...groupsByProject.values()];
 }
 
-function formatProjectSessionButtonLabel(session, now = new Date()) {
-  const provider = formatProviderName(session?.agentType || 'provider');
-  const project = normalizeProjectName(session?.project);
-  const relativeTime = formatRelativeTime(session?.lastUserMessageAt, now);
-  const title = String(session?.title || session?.lastUserMessage || session?.id || 'Untitled session')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return truncateLabel(`${title} | ${provider} | ${project} | ${relativeTime}`);
-}
-
-function formatProjectButtonLabel(group, now = new Date()) {
+function formatProjectButtonLabel(group) {
   const sessions = Array.isArray(group?.sessions) ? group.sessions : [];
-  const newestSession = sessions[0] || {};
-  const project = normalizeProjectName(group?.project || newestSession.project);
-  const relativeTime = formatRelativeTime(newestSession.lastUserMessageAt, now);
-  const count = sessions.length;
-  const suffix = count === 1 ? 'sessie' : 'sessies';
+  const project = normalizeProjectName(group?.project || sessions[0]?.project);
 
-  return truncateLabel(`${project} | ${count} ${suffix} | nieuwste ${relativeTime}`);
+  return truncateLabel(`${project} (${sessions.length})`);
 }
 
 function createSessionKeyboard(sessions, registerToken, options = {}) {
   const limit = Number.isFinite(options.limit) ? Math.max(0, Number(options.limit)) : SESSION_PICKER_LIMIT;
-  const now = options.now || new Date();
   const rows = [];
 
   for (const session of (Array.isArray(sessions) ? sessions : []).slice(0, limit)) {
     const token = registerToken(session);
     rows.push([
       {
-        text: formatSessionButtonLabel(session, now),
+        text: formatSessionButtonLabel(session),
         callback_data: token,
       },
     ]);
@@ -192,25 +148,13 @@ function createSessionKeyboard(sessions, registerToken, options = {}) {
   };
 }
 
-function createSessionProjectKeyboard(sessions, registerSessionToken, registerProjectToken, options = {}) {
-  const now = options.now || new Date();
+function createSessionProjectKeyboard(sessions, registerProjectToken, options = {}) {
   const rows = [];
 
   for (const group of groupSessionsByProject(sessions, options)) {
-    if (group.sessions.length === 1) {
-      const session = group.sessions[0];
-      rows.push([
-        {
-          text: formatProjectSessionButtonLabel(session, now),
-          callback_data: registerSessionToken(session),
-        },
-      ]);
-      continue;
-    }
-
     rows.push([
       {
-        text: formatProjectButtonLabel(group, now),
+        text: formatProjectButtonLabel(group),
         callback_data: registerProjectToken(group),
       },
     ]);
@@ -1098,13 +1042,11 @@ class Bridge {
     this.sessionPickerEntries.clear();
     this.sessionPickerProjectEntries.clear();
     const groups = groupSessionsByProject(recentSessions, { limit: SESSION_PICKER_LIMIT });
-    const replyMarkup = createSessionProjectKeyboard(
-      recentSessions,
-      session => this.registerSessionPickerEntry(session),
-      group => this.registerSessionPickerProject(group),
-      { limit: SESSION_PICKER_LIMIT }
-    );
-    await this.safeSendMessage(`Kies een project of sessie (${recentSessions.length} meest recente, ${groups.length} projecten):`, {
+    const replyMarkup = createSessionProjectKeyboard(recentSessions, group => this.registerSessionPickerProject(group), {
+      limit: SESSION_PICKER_LIMIT,
+    });
+    const projectSuffix = groups.length === 1 ? 'project' : 'projecten';
+    await this.safeSendMessage(`Kies een project (${groups.length} ${projectSuffix}):`, {
       replyMarkup,
     });
   }
@@ -1168,7 +1110,7 @@ class Bridge {
       limit: SESSION_PICKER_LIMIT,
     });
     await this.answerCallback(callback.callbackQueryId, project);
-    await this.safeSendMessage(`Kies een sessie voor ${project} (${sessions.length} van de 20 meest recente):`, { replyMarkup });
+    await this.safeSendMessage(`Kies een sessie voor ${project}:`, { replyMarkup });
   }
 
   async handleSessionPickerCallback(callback) {
