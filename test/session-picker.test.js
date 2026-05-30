@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import Bridge, { createSessionKeyboard, createSessionProjectKeyboard, formatSessionButtonLabel, groupSessionsByProject } from '../src/bridge.js';
+import Bridge, {
+  createProjectSessionKeyboard,
+  createSessionKeyboard,
+  createSessionProjectKeyboard,
+  createTelegramBotCommands,
+  formatSessionButtonLabel,
+  groupSessionsByProject,
+} from '../src/bridge.js';
 
 function makeSession(index, overrides = {}) {
   return {
@@ -117,6 +124,183 @@ test('createSessionProjectKeyboard renders every project as a project button wit
     registeredProjects.get('proj_beta').sessions.map(session => session.id),
     ['beta-only']
   );
+});
+
+test('createProjectSessionKeyboard shows new buttons for providers found in the project', () => {
+  const registeredSessions = new Map();
+  const registeredNewSessions = new Map();
+  const group = {
+    project: 'alpha',
+    cwd: '/tmp/alpha',
+    sessions: [
+      makeSession(1, { id: 'alpha-claude', project: 'alpha', cwd: '/tmp/alpha', agentType: 'claude', title: 'Claude alpha' }),
+      makeSession(2, { id: 'alpha-codex', project: 'alpha', cwd: '/tmp/alpha', agentType: 'codex', title: 'Codex alpha' }),
+    ],
+  };
+
+  const keyboard = createProjectSessionKeyboard(
+    group,
+    session => {
+      const token = `sess_${session.id}`;
+      registeredSessions.set(token, session);
+      return token;
+    },
+    entry => {
+      const token = `new_${entry.provider}`;
+      registeredNewSessions.set(token, entry);
+      return token;
+    }
+  );
+
+  assert.deepEqual(
+    keyboard.inline_keyboard[0].map(button => button.text),
+    ['New Claude', 'New Codex']
+  );
+  assert.equal(keyboard.inline_keyboard[1][0].text, 'Claude alpha (Claude)');
+  assert.equal(keyboard.inline_keyboard[2][0].text, 'Codex alpha (Codex)');
+  assert.deepEqual(
+    [...registeredNewSessions.values()],
+    [
+      { provider: 'claude', project: 'alpha', cwd: '/tmp/alpha' },
+      { provider: 'codex', project: 'alpha', cwd: '/tmp/alpha' },
+    ]
+  );
+  assert.equal(registeredSessions.size, 2);
+});
+
+test('createProjectSessionKeyboard hides providers absent from the project', () => {
+  const registeredNewSessions = new Map();
+  const group = {
+    project: 'beta',
+    cwd: '/tmp/beta',
+    sessions: [makeSession(1, { id: 'beta-codex', project: 'beta', cwd: '/tmp/beta', agentType: 'codex', title: 'Codex beta' })],
+  };
+
+  const keyboard = createProjectSessionKeyboard(
+    group,
+    session => `sess_${session.id}`,
+    entry => {
+      const token = `new_${entry.provider}`;
+      registeredNewSessions.set(token, entry);
+      return token;
+    },
+    { visibleProviders: ['codex'] }
+  );
+
+  assert.deepEqual(
+    keyboard.inline_keyboard[0].map(button => button.text),
+    ['New Codex']
+  );
+  assert.equal(keyboard.inline_keyboard[1][0].text, 'Codex beta (Codex)');
+  assert.deepEqual([...registeredNewSessions.values()], [{ provider: 'codex', project: 'beta', cwd: '/tmp/beta' }]);
+});
+
+test('createTelegramBotCommands hides provider switches not in the visible provider set', () => {
+  assert.deepEqual(
+    createTelegramBotCommands(['codex']).map(command => command.command),
+    ['help', 'new', 'stop', 'codex', 'projects', 'sessions', 'status']
+  );
+  assert.deepEqual(
+    createTelegramBotCommands(['claude', 'codex']).map(command => command.command),
+    ['help', 'new', 'stop', 'claude', 'codex', 'projects', 'sessions', 'status']
+  );
+});
+
+test('showSessionPicker sends latest 10 sessions as a flat list', async () => {
+  const data = {
+    provider: 'codex',
+    claudeArgs: [],
+    codexArgs: [],
+    claudeLastSessionId: null,
+    codexLastSessionId: null,
+    telegramChatId: 'chat-1',
+  };
+  const sentMessages = [];
+  const config = {
+    get claudeArgs() {
+      return data.claudeArgs;
+    },
+    get codexArgs() {
+      return data.codexArgs;
+    },
+    get claudeLastSessionId() {
+      return data.claudeLastSessionId;
+    },
+    get codexLastSessionId() {
+      return data.codexLastSessionId;
+    },
+    get telegramChatId() {
+      return data.telegramChatId;
+    },
+    get telegramBotUsername() {
+      return null;
+    },
+    set(key, value) {
+      data[key] = value;
+    },
+    setMany(updates) {
+      Object.assign(data, updates);
+    },
+    clearPairing() {},
+  };
+  const sessions = Array.from({ length: 12 }, (_, index) => makeSession(index + 1, { project: index < 6 ? 'alpha' : 'beta' }));
+  const bridge = new Bridge(config, 'codex', [], {
+    gatherSessions: async () => sessions,
+  });
+  bridge.logCliEvent = () => {};
+  bridge.telegram = {
+    sendMessage(chatId, text, options) {
+      sentMessages.push({ chatId, text, options });
+    },
+  };
+
+  await bridge.showSessionPicker();
+
+  assert.equal(sentMessages[0].chatId, 'chat-1');
+  assert.match(sentMessages[0].text, /Kies een sessie/);
+  assert.doesNotMatch(sentMessages[0].text, /project/);
+  assert.equal(sentMessages[0].options.replyMarkup.inline_keyboard.length, 10);
+  assert.ok(sentMessages[0].options.replyMarkup.inline_keyboard.every(row => row[0].callback_data.startsWith('sess_')));
+  assert.equal(bridge.sessionPickerEntries.size, 10);
+  assert.equal(bridge.sessionPickerProjectEntries.size, 0);
+});
+
+test('handleCommand opens project picker for projects command', async () => {
+  const config = {
+    get claudeArgs() {
+      return [];
+    },
+    get codexArgs() {
+      return [];
+    },
+    get claudeLastSessionId() {
+      return null;
+    },
+    get codexLastSessionId() {
+      return null;
+    },
+    get telegramChatId() {
+      return 'chat-1';
+    },
+    get telegramBotUsername() {
+      return 'RegelneefBot';
+    },
+    set() {},
+    setMany() {},
+    clearPairing() {},
+  };
+  const bridge = new Bridge(config, 'claude', []);
+  let showProjectPickerCalls = 0;
+  bridge.showProjectPicker = async () => {
+    showProjectPickerCalls += 1;
+  };
+  bridge.safeSendMessage = async () => {
+    throw new Error('Expected /projects command to open picker');
+  };
+
+  await bridge.handleCommand('/projects@RegelneefBot');
+
+  assert.equal(showProjectPickerCalls, 1);
 });
 
 test('handleSessionPickerCallback selects provider session id and cwd', async () => {
@@ -261,7 +445,7 @@ test('handleSessionPickerCallback stops active prompt and clears queued messages
   assert.equal(data.codexLastSessionId, 'codex-session');
 });
 
-test('handleSessionProjectCallback shows sessions for a multi-session project', async () => {
+test('handleSessionProjectCallback shows new-session buttons and existing sessions for a project', async () => {
   const data = {
     provider: 'claude',
     claudeArgs: [],
@@ -311,9 +495,10 @@ test('handleSessionProjectCallback shows sessions for a multi-session project', 
   };
   bridge.sessionPickerProjectEntries.set('proj_alpha', {
     project: 'alpha',
+    cwd: '/tmp/alpha',
     sessions: [
-      makeSession(1, { id: 'alpha-new', project: 'alpha', title: 'New alpha work' }),
-      makeSession(2, { id: 'alpha-old', project: 'alpha', title: 'Older alpha work' }),
+      makeSession(1, { id: 'alpha-claude', project: 'alpha', cwd: '/tmp/alpha', agentType: 'claude', title: 'Claude alpha work' }),
+      makeSession(2, { id: 'alpha-codex', project: 'alpha', cwd: '/tmp/alpha', agentType: 'codex', title: 'Codex alpha work' }),
     ],
   });
 
@@ -327,8 +512,160 @@ test('handleSessionProjectCallback shows sessions for a multi-session project', 
   assert.deepEqual(answeredCallbacks, [{ callbackQueryId: 'callback-1', text: 'alpha' }]);
   assert.equal(sentMessages[0].chatId, 'chat-1');
   assert.match(sentMessages[0].text, /Kies een sessie voor alpha/);
-  assert.equal(sentMessages[0].options.replyMarkup.inline_keyboard.length, 2);
+  assert.deepEqual(
+    sentMessages[0].options.replyMarkup.inline_keyboard[0].map(button => button.text),
+    ['New Claude', 'New Codex']
+  );
+  assert.equal(sentMessages[0].options.replyMarkup.inline_keyboard.length, 3);
   assert.equal(new Set([...bridge.sessionPickerEntries.values()].map(session => session.id)).size, 2);
+  assert.deepEqual(
+    [...bridge.newSessionProjectEntries.values()].map(entry => entry.provider),
+    ['claude', 'codex']
+  );
+});
+
+test('handleSessionProjectCallback does not auto-select single-session projects', async () => {
+  const data = {
+    provider: 'claude',
+    claudeArgs: [],
+    codexArgs: [],
+    claudeLastSessionId: null,
+    codexLastSessionId: null,
+    telegramChatId: 'chat-1',
+  };
+  const sentMessages = [];
+  const config = {
+    get claudeArgs() {
+      return data.claudeArgs;
+    },
+    get codexArgs() {
+      return data.codexArgs;
+    },
+    get claudeLastSessionId() {
+      return data.claudeLastSessionId;
+    },
+    get codexLastSessionId() {
+      return data.codexLastSessionId;
+    },
+    get telegramChatId() {
+      return data.telegramChatId;
+    },
+    get telegramBotUsername() {
+      return null;
+    },
+    set(key, value) {
+      data[key] = value;
+    },
+    setMany(updates) {
+      Object.assign(data, updates);
+    },
+    clearPairing() {},
+  };
+  const bridge = new Bridge(config, 'claude', []);
+  bridge.logCliEvent = () => {};
+  bridge.telegram = {
+    sendMessage(chatId, text, options) {
+      sentMessages.push({ chatId, text, options });
+    },
+    answerCallbackQuery() {},
+  };
+  bridge.sessionPickerProjectEntries.set('proj_beta', {
+    project: 'beta',
+    cwd: '/tmp/beta',
+    sessions: [makeSession(1, { id: 'beta-codex', project: 'beta', cwd: '/tmp/beta', agentType: 'codex', title: 'Codex beta work' })],
+  });
+
+  await bridge.handleSessionProjectCallback({
+    type: 'callback',
+    callbackQueryId: 'callback-1',
+    data: 'proj_beta',
+    chatId: 'chat-1',
+  });
+
+  assert.match(sentMessages[0].text, /Kies een sessie voor beta/);
+  assert.deepEqual(
+    sentMessages[0].options.replyMarkup.inline_keyboard[0].map(button => button.text),
+    ['New Codex']
+  );
+  assert.equal(data.codexLastSessionId, null);
+  assert.equal(bridge.forceNewNextPrompt, false);
+});
+
+test('handleNewSessionCallback selects provider, project cwd and fresh session mode', async () => {
+  const data = {
+    provider: 'codex',
+    claudeArgs: [],
+    codexArgs: [],
+    claudeLastSessionId: 'old-claude-session',
+    codexLastSessionId: 'old-codex-session',
+    telegramChatId: 'chat-1',
+  };
+  const sentMessages = [];
+  const answeredCallbacks = [];
+  const config = {
+    get claudeArgs() {
+      return data.claudeArgs;
+    },
+    get codexArgs() {
+      return data.codexArgs;
+    },
+    get claudeLastSessionId() {
+      return data.claudeLastSessionId;
+    },
+    get codexLastSessionId() {
+      return data.codexLastSessionId;
+    },
+    get telegramChatId() {
+      return data.telegramChatId;
+    },
+    get telegramBotUsername() {
+      return null;
+    },
+    set(key, value) {
+      data[key] = value;
+    },
+    setMany(updates) {
+      Object.assign(data, updates);
+    },
+    clearPairing() {},
+  };
+  const bridge = new Bridge(config, 'codex', []);
+  bridge.logCliEvent = () => {};
+  bridge.telegram = {
+    sendMessage(chatId, text) {
+      sentMessages.push({ chatId, text });
+    },
+    answerCallbackQuery(callbackQueryId, text) {
+      answeredCallbacks.push({ callbackQueryId, text });
+    },
+  };
+  const abortController = new globalThis.AbortController();
+  bridge.activePromptAbortController = abortController;
+  bridge.telegramPendingMessages = ['queued for old session'];
+  bridge.newSessionProjectEntries.set('new_alpha_claude', {
+    provider: 'claude',
+    project: 'alpha',
+    cwd: '/tmp/alpha',
+  });
+
+  await bridge.handleNewSessionCallback({
+    type: 'callback',
+    callbackQueryId: 'callback-1',
+    data: 'new_alpha_claude',
+    chatId: 'chat-1',
+  });
+
+  assert.equal(abortController.signal.aborted, true);
+  assert.equal(bridge.activePromptAbortReason, 'session_switch');
+  assert.deepEqual(bridge.telegramPendingMessages, []);
+  assert.equal(bridge.provider, 'claude');
+  assert.equal(data.provider, 'claude');
+  assert.equal(data.claudeLastSessionId, null);
+  assert.equal(data.codexLastSessionId, 'old-codex-session');
+  assert.equal(bridge.selectedSessionCwd, '/tmp/alpha');
+  assert.equal(bridge.forceNewNextPrompt, true);
+  assert.deepEqual(answeredCallbacks, [{ callbackQueryId: 'callback-1', text: 'New Claude' }]);
+  assert.match(sentMessages[0].text, /New Claude session selected/);
 });
 
 test('handleCommand accepts bot-suffixed sessions command from Telegram menu', async () => {
@@ -431,7 +768,9 @@ test('configureTelegramCommands registers one short session menu command for the
     setMany() {},
     clearPairing() {},
   };
-  const bridge = new Bridge(config, 'claude', []);
+  const bridge = new Bridge(config, 'claude', [], {
+    gatherSessions: async () => [makeSession(1, { agentType: 'claude' }), makeSession(2, { agentType: 'codex' })],
+  });
   const calls = [];
 
   await bridge.configureTelegramCommands({
@@ -442,9 +781,10 @@ test('configureTelegramCommands registers one short session menu command for the
 
   assert.deepEqual(
     calls[0].commands.map(command => command.command),
-    ['help', 'new', 'stop', 'claude', 'codex', 'sessions', 'status']
+    ['help', 'new', 'stop', 'claude', 'codex', 'projects', 'sessions', 'status']
   );
   assert.equal(calls[0].commands.find(command => command.command === 'sessions')?.description, 'Choose session');
+  assert.equal(calls[0].commands.find(command => command.command === 'projects')?.description, 'Choose project');
   assert.deepEqual(calls[0].options, { chatId: '6314031751' });
 });
 
