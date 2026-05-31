@@ -161,6 +161,72 @@ test('gatherSessions uses Claude Desktop local session titles', async () => {
   assert.equal(sessions[0].title, 'Telegram plugin installation');
 });
 
+test('gatherSessions skips Claude sessions marked archived in Claude Desktop metadata', async () => {
+  const homeDir = await makeHome();
+  const activeClaudeFile = path.join(homeDir, '.claude', 'projects', '-Users-geert-code-bvgeert', 'claude-active.jsonl');
+  const archivedClaudeFile = path.join(homeDir, '.claude', 'projects', '-Users-geert-code-bvgeert', 'claude-archived.jsonl');
+  const activeMetadataFile = path.join(
+    homeDir,
+    'Library',
+    'Application Support',
+    'Claude',
+    'claude-code-sessions',
+    'workspace',
+    'project',
+    'active.json'
+  );
+  const archivedMetadataFile = path.join(
+    homeDir,
+    'Library',
+    'Application Support',
+    'Claude',
+    'claude-code-sessions',
+    'workspace',
+    'project',
+    'archived.json'
+  );
+
+  await writeJsonl(activeClaudeFile, [
+    {
+      type: 'user',
+      timestamp: '2026-05-29T08:00:00.000Z',
+      message: { content: 'active session prompt' },
+    },
+  ]);
+  await writeJsonl(archivedClaudeFile, [
+    {
+      type: 'user',
+      timestamp: '2026-05-29T09:00:00.000Z',
+      message: { content: 'archived session prompt' },
+    },
+  ]);
+  await mkdir(path.dirname(activeMetadataFile), { recursive: true });
+  await writeFile(
+    activeMetadataFile,
+    JSON.stringify({
+      cliSessionId: 'claude-active',
+      title: 'Active Claude session',
+      isArchived: false,
+    })
+  );
+  await writeFile(
+    archivedMetadataFile,
+    JSON.stringify({
+      cliSessionId: 'claude-archived',
+      title: 'Archived Claude session',
+      isArchived: true,
+    })
+  );
+
+  const sessions = await gatherSessions({ homeDir, maxAgeDays: 3650 });
+
+  assert.deepEqual(
+    sessions.map(session => session.id),
+    ['claude-active']
+  );
+  assert.equal(sessions[0].title, 'Active Claude session');
+});
+
 test('parseCodexSessionFile skips sessions without a user message', async () => {
   const homeDir = await makeHome();
   const filePath = path.join(homeDir, 'codex.jsonl');

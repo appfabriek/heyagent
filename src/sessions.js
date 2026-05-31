@@ -178,23 +178,28 @@ function readCodexSessionTitles(homeDir) {
   return titles;
 }
 
-function readClaudeSessionTitles(homeDir) {
-  const titles = new Map();
+function readClaudeSessionMetadata(homeDir) {
+  const sessions = new Map();
   const sessionsDir = join(homeDir, 'Library', 'Application Support', 'Claude', 'claude-code-sessions');
   if (!existsSync(sessionsDir)) {
-    return titles;
+    return sessions;
   }
 
   for (const filePath of findJsonFiles(sessionsDir)) {
     const entry = readJsonFile(filePath);
     const cliSessionId = typeof entry?.cliSessionId === 'string' ? entry.cliSessionId.trim() : '';
     const title = truncate(entry?.title, 80);
-    if (cliSessionId && title) {
-      titles.set(cliSessionId, title);
+    const isArchived = entry?.isArchived === true || entry?.archived === true || entry?.status === 'archived';
+    if (cliSessionId) {
+      const existing = sessions.get(cliSessionId) || {};
+      sessions.set(cliSessionId, {
+        title: title || existing.title || null,
+        isArchived: Boolean(existing.isArchived || isArchived),
+      });
     }
   }
 
-  return titles;
+  return sessions;
 }
 
 export function parseClaudeSessionFile(filePath, sessionId, projectKey, options = {}) {
@@ -290,7 +295,7 @@ function isRecentEnough(filePath, maxAgeDays) {
   return Date.now() - stat.mtimeMs <= maxAgeDays * DAY_MS;
 }
 
-async function gatherClaudeSessions(homeDir, maxAgeDays, titleIndex = new Map()) {
+async function gatherClaudeSessions(homeDir, maxAgeDays, metadataIndex = new Map()) {
   const projectsDir = join(homeDir, '.claude', 'projects');
   if (!existsSync(projectsDir)) {
     return [];
@@ -312,8 +317,13 @@ async function gatherClaudeSessions(homeDir, maxAgeDays, titleIndex = new Map())
         }
 
         const sessionId = basename(file, '.jsonl');
+        const metadata = metadataIndex.get(sessionId) || {};
+        if (metadata.isArchived) {
+          continue;
+        }
+
         const session = parseClaudeSessionFile(filePath, sessionId, projectKey, {
-          title: titleIndex.get(sessionId),
+          title: metadata.title,
         });
         if (session) {
           sessions.push(session);
@@ -356,10 +366,10 @@ async function gatherCodexSessions(homeDir, maxAgeDays, titleIndex = new Map()) 
 export async function gatherSessions(options = {}) {
   const homeDir = options.homeDir || homedir();
   const maxAgeDays = Number.isFinite(options.maxAgeDays) ? options.maxAgeDays : DEFAULT_MAX_AGE_DAYS;
-  const claudeTitles = readClaudeSessionTitles(homeDir);
+  const claudeMetadata = readClaudeSessionMetadata(homeDir);
   const codexTitles = readCodexSessionTitles(homeDir);
   const results = await Promise.allSettled([
-    gatherClaudeSessions(homeDir, maxAgeDays, claudeTitles),
+    gatherClaudeSessions(homeDir, maxAgeDays, claudeMetadata),
     gatherCodexSessions(homeDir, maxAgeDays, codexTitles),
   ]);
   const sessions = [];
