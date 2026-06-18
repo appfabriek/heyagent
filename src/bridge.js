@@ -16,6 +16,16 @@ import { runGrokPrompt } from './providers/grok-provider.js';
 import { applyDefaultBypassArgs } from './args.js';
 import { formatSleepInhibitorStatus, startSleepInhibitor } from './sleep-inhibitor.js';
 import { gatherSessions } from './sessions.js';
+import {
+  VOICE_SESSION_LIST_LIMIT,
+  findProjectGroup,
+  formatAmbiguousProjectsPrompt,
+  formatUnknownProjectPrompt,
+  formatVoiceProjectPrompt,
+  isVoicePickerCancel,
+  parseProjectNavigationIntent,
+  parseSessionChoice,
+} from './voice-session-picker.js';
 
 const BOTFATHER_URL = 'https://t.me/BotFather';
 const SETUP_MODE_PHONE = 'phone_onboarding';
@@ -343,6 +353,7 @@ class Bridge {
     this.newSessionProjectEntries = new Map();
     this.sessionPickerCounter = 0;
     this.selectedSessionCwd = null;
+    this.voiceSessionPickerState = null;
 
     this.onSignal = () => {
       this.requestStopCurrentPrompt('shutdown');
@@ -566,6 +577,7 @@ class Bridge {
           '/grok - switch to Grok provider',
           '/projects - choose a project, then continue or start a session',
           '/sessions or /sessies - choose one of the 10 most recent sessions in Telegram',
+          'ga naar project <naam> - voice-friendly numbered session picker',
           '/say <text> - send a raw message to Telegram',
           '/ask <prompt> - run prompt through provider and send response to Telegram',
           '/exit - stop HeyAgent',
@@ -643,6 +655,10 @@ class Bridge {
         return;
       }
       await this.safeSendMessage(message, { from: 'CLI' });
+      return;
+    }
+
+    if (await this.handleVoiceSessionPickerMessage(line)) {
       return;
     }
 
@@ -1302,6 +1318,108 @@ class Bridge {
     );
   }
 
+  clearVoiceSessionPickerState() {
+    this.voiceSessionPickerState = null;
+  }
+
+  async applySelectedSession(session, options = {}) {
+    if (!session) {
+      return false;
+    }
+
+    if (session.agentType !== 'claude' && session.agentType !== 'codex' && session.agentType !== 'grok') {
+      await this.safeSendMessage(`Unsupported session provider: ${session.agentType || 'unknown'}`, options);
+      return false;
+    }
+
+    this.requestStopCurrentPrompt('session_switch');
+    this.clearQueuedTelegramMessages();
+    this.switchProvider(session.agentType);
+    this.setBoundSessionId(session.id);
+    this.selectedSessionCwd = session.cwd || null;
+    this.forceNewNextPrompt = false;
+    this.clearVoiceSessionPickerState();
+
+    const providerLabel = formatProviderName(session.agentType);
+    const project = session.project || 'unknown';
+    const title = session.title || session.lastUserMessage || session.id;
+    await this.safeSendMessage(
+      [`${providerLabel}-sessie geselecteerd.`, `Project: ${project}`, title ? `Titel: ${title}` : null, 'Je volgende bericht gaat verder in deze sessie.']
+        .filter(Boolean)
+        .join('\n'),
+      options
+    );
+    return true;
+  }
+
+  async startVoiceProjectPicker(projectQuery) {
+    const sessions = await this.gatherSessions();
+    const groups = groupSessionsByProject(sessions);
+    const { group, ambiguous } = findProjectGroup(groups, projectQuery);
+
+    if (ambiguous.length > 0) {
+      await this.safeSendMessage(formatAmbiguousProjectsPrompt(ambiguous));
+      return true;
+    }
+
+    if (!group) {
+      await this.safeSendMessage(formatUnknownProjectPrompt(projectQuery, groups));
+      return true;
+    }
+
+    const projectSessions = Array.isArray(group.sessions) ? group.sessions.slice(0, VOICE_SESSION_LIST_LIMIT) : [];
+    this.voiceSessionPickerState = {
+      project: normalizeProjectName(group.project),
+      cwd: group.cwd || projectSessions.find(session => session?.cwd)?.cwd || null,
+      sessions: projectSessions,
+    };
+
+    await this.safeSendMessage(formatVoiceProjectPrompt(this.voiceSessionPickerState.project, projectSessions));
+    return true;
+  }
+
+  async handleVoiceSessionPickerMessage(text) {
+    if (isVoicePickerCancel(text)) {
+      this.clearVoiceSessionPickerState();
+      await this.safeSendMessage('Sessiekeuze geannuleerd.');
+      return true;
+    }
+
+    if (this.voiceSessionPickerState) {
+      const choice = parseSessionChoice(text, this.voiceSessionPickerState.sessions.length);
+      if (choice === 'new') {
+        this.requestStopCurrentPrompt('session_switch');
+        this.clearQueuedTelegramMessages();
+        this.setBoundSessionId(null);
+        this.selectedSessionCwd = this.voiceSessionPickerState.cwd || null;
+        this.forceNewNextPrompt = true;
+        const project = this.voiceSessionPickerState.project;
+        this.clearVoiceSessionPickerState();
+        await this.safeSendMessage(`Nieuwe ${formatProviderName(this.provider)}-sessie voor ${project}. Je volgende bericht start vers.`);
+        return true;
+      }
+
+      if (Number.isInteger(choice)) {
+        const session = this.voiceSessionPickerState.sessions[choice - 1];
+        if (!session) {
+          await this.safeSendMessage(`Kies een nummer tussen 1 en ${this.voiceSessionPickerState.sessions.length}.`);
+          return true;
+        }
+
+        await this.applySelectedSession(session);
+        return true;
+      }
+    }
+
+    const projectQuery = parseProjectNavigationIntent(text);
+    if (projectQuery) {
+      await this.startVoiceProjectPicker(projectQuery);
+      return true;
+    }
+
+    return false;
+  }
+
   async handleSessionPickerCallback(callback) {
     const token = String(callback?.data || '').trim();
     const session = this.sessionPickerEntries.get(token);
@@ -1312,29 +1430,9 @@ class Bridge {
       return;
     }
 
-    if (session.agentType !== 'claude' && session.agentType !== 'codex' && session.agentType !== 'grok') {
-      await this.answerCallback(callback.callbackQueryId, 'Onbekende provider');
-      await this.safeSendMessage(`Unsupported session provider: ${session.agentType || 'unknown'}`);
-      return;
-    }
-
-    this.requestStopCurrentPrompt('session_switch');
-    this.clearQueuedTelegramMessages();
-    this.switchProvider(session.agentType);
-    this.setBoundSessionId(session.id);
-    this.selectedSessionCwd = session.cwd || null;
-    this.forceNewNextPrompt = false;
     this.sessionPickerEntries.delete(token);
-
-    const providerLabel = formatProviderName(session.agentType);
-    const project = session.project || 'unknown';
-    const title = session.title || session.lastUserMessage || session.id;
-    await this.answerCallback(callback.callbackQueryId, `${providerLabel} geselecteerd`);
-    await this.safeSendMessage(
-      [`Selected ${providerLabel} session.`, `Project: ${project}`, `Session: ${session.id}`, title ? `Title: ${title}` : null]
-        .filter(Boolean)
-        .join('\n')
-    );
+    await this.answerCallback(callback.callbackQueryId, `${formatProviderName(session.agentType)} geselecteerd`);
+    await this.applySelectedSession(session);
   }
 
   async pollOnce() {
@@ -1402,6 +1500,10 @@ class Bridge {
 
     if (text.startsWith('/')) {
       await this.handleCommand(text);
+      return;
+    }
+
+    if (await this.handleVoiceSessionPickerMessage(text)) {
       return;
     }
 
@@ -1485,6 +1587,7 @@ class Bridge {
           '/grok - switch to Grok provider',
           '/projects - choose a project, then continue or start a session',
           '/sessions or /sessies - choose one of the 10 most recent sessions',
+          'ga naar project <naam> - numbered session picker for voice/CarPlay',
           '/status - show current status',
           '',
           `Send any normal message to talk to ${this.provider}.`,
@@ -1531,8 +1634,15 @@ class Bridge {
     }
 
     if (command === '/stop') {
+      const hadVoicePicker = Boolean(this.voiceSessionPickerState);
+      this.clearVoiceSessionPickerState();
       const stopped = this.requestStopCurrentPrompt('manual_stop');
       const clearedCount = this.clearQueuedTelegramMessages();
+
+      if (hadVoicePicker) {
+        await this.safeSendMessage('Sessiekeuze geannuleerd.');
+        return;
+      }
 
       if (stopped) {
         await this.safeSendMessage(`Stopping current ${formatProviderName(this.provider)} request and clearing queued messages...`);

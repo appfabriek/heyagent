@@ -378,7 +378,7 @@ test('handleSessionPickerCallback selects provider session id and cwd', async ()
   assert.equal(bridge.forceNewNextPrompt, false);
   assert.deepEqual(answeredCallbacks, [{ callbackQueryId: 'callback-1', text: 'Codex geselecteerd' }]);
   assert.equal(sentMessages[0].chatId, 'chat-1');
-  assert.match(sentMessages[0].text, /Selected Codex session/);
+  assert.match(sentMessages[0].text, /Codex-sessie geselecteerd/);
 });
 
 test('handleSessionPickerCallback stops active prompt and clears queued messages before switching', async () => {
