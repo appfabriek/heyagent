@@ -204,6 +204,10 @@ test('createTelegramBotCommands hides provider switches not in the visible provi
     createTelegramBotCommands(['claude', 'codex']).map(command => command.command),
     ['help', 'new', 'stop', 'claude', 'codex', 'projects', 'sessions', 'status']
   );
+  assert.deepEqual(
+    createTelegramBotCommands(['grok']).map(command => command.command),
+    ['help', 'new', 'stop', 'grok', 'projects', 'sessions', 'status']
+  );
 });
 
 test('showSessionPicker sends latest 10 sessions as a flat list', async () => {

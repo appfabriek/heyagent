@@ -41,5 +41,20 @@ export function applyDefaultBypassArgs(provider, providerArgs) {
     return { providerArgs: args, defaultBypassApplied: false };
   }
 
+  if (provider === 'grok') {
+    const hasExplicitPermissionMode =
+      hasFlag(args, '--always-approve') ||
+      hasFlag(args, '--permission-mode') ||
+      hasFlag(args, '--allow') ||
+      hasFlag(args, '--deny');
+
+    if (!hasExplicitPermissionMode) {
+      args.unshift('--always-approve');
+      return { providerArgs: args, defaultBypassApplied: true };
+    }
+
+    return { providerArgs: args, defaultBypassApplied: false };
+  }
+
   return { providerArgs: args, defaultBypassApplied: false };
 }

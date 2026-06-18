@@ -142,6 +142,49 @@ function extractClaudeUserTexts(entry) {
   return content.filter(block => block?.type === 'text' && typeof block.text === 'string' && block.text.trim()).map(block => block.text.trim());
 }
 
+function decodeGrokCwdKey(cwdKey) {
+  try {
+    return decodeURIComponent(String(cwdKey || '').trim());
+  } catch {
+    return null;
+  }
+}
+
+function extractGrokUserText(entry) {
+  if (entry?.type !== 'user') {
+    return '';
+  }
+
+  const content = entry.content;
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  for (const block of content) {
+    if (block?.type !== 'text' || typeof block.text !== 'string') {
+      continue;
+    }
+
+    const text = block.text.trim();
+    if (!text) {
+      continue;
+    }
+
+    if (text.startsWith('<user_info>') || text.startsWith('<rules>') || text.startsWith('<agent_skills>')) {
+      continue;
+    }
+
+    const queryMatch = text.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/i);
+    if (queryMatch) {
+      return queryMatch[1].trim();
+    }
+
+    return text;
+  }
+
+  return '';
+}
+
 function extractCodexUserText(entry) {
   if (entry?.type !== 'response_item' || entry.payload?.role !== 'user') {
     return '';
@@ -243,6 +286,50 @@ export function parseClaudeSessionFile(filePath, sessionId, projectKey, options 
   };
 }
 
+export function parseGrokSessionDir(sessionDir, cwdKey, options = {}) {
+  const summaryPath = join(sessionDir, 'summary.json');
+  const summary = readJsonFile(summaryPath);
+  if (!summary) {
+    return null;
+  }
+
+  const sessionId = typeof summary.info?.id === 'string' ? summary.info.id.trim() : basename(sessionDir);
+  const cwd = summary.info?.cwd || decodeGrokCwdKey(cwdKey);
+  const chatPath = join(sessionDir, 'chat_history.jsonl');
+  let firstUserText = null;
+  let lastUserText = null;
+
+  if (existsSync(chatPath)) {
+    for (const entry of readJsonLines(chatPath)) {
+      const userText = extractGrokUserText(entry);
+      if (!userText) {
+        continue;
+      }
+      if (!firstUserText) {
+        firstUserText = userText;
+      }
+      lastUserText = userText;
+    }
+  }
+
+  const lastUserMessageAt = summary.last_active_at || summary.updated_at || summary.created_at || null;
+  if (!lastUserMessageAt) {
+    return null;
+  }
+
+  return {
+    id: sessionId,
+    agentType: 'grok',
+    title: truncate(options.title, 80) || truncate(summary.session_summary, 80) || truncate(summary.generated_title, 80) || truncate(firstUserText, 80),
+    lastUserMessage: truncate(lastUserText, 120),
+    lastUserMessageAt,
+    project: projectNameFromPath(cwd),
+    cwd: cwd || null,
+    model: summary.current_model_id || null,
+    resumable: true,
+  };
+}
+
 export function parseCodexSessionFile(filePath, options = {}) {
   const entries = readJsonLines(filePath);
   let sessionId = null;
@@ -337,6 +424,52 @@ async function gatherClaudeSessions(homeDir, maxAgeDays, metadataIndex = new Map
   return sessions;
 }
 
+async function gatherGrokSessions(homeDir, maxAgeDays) {
+  const sessionsDir = join(homeDir, '.grok', 'sessions');
+  if (!existsSync(sessionsDir)) {
+    return [];
+  }
+
+  const sessions = [];
+  for (const cwdKey of safeReaddir(sessionsDir)) {
+    if (cwdKey === 'session_search.sqlite') {
+      continue;
+    }
+
+    const cwdDir = join(sessionsDir, cwdKey);
+    if (!isDirectory(cwdDir)) {
+      continue;
+    }
+
+    for (const sessionEntry of safeReaddir(cwdDir)) {
+      const sessionDir = join(cwdDir, sessionEntry);
+      if (!isDirectory(sessionDir)) {
+        continue;
+      }
+
+      const summaryPath = join(sessionDir, 'summary.json');
+      if (!existsSync(summaryPath)) {
+        continue;
+      }
+
+      try {
+        if (!isRecentEnough(summaryPath, maxAgeDays)) {
+          continue;
+        }
+
+        const session = parseGrokSessionDir(sessionDir, cwdKey);
+        if (session) {
+          sessions.push(session);
+        }
+      } catch {
+        // Skip unreadable sessions.
+      }
+    }
+  }
+
+  return sessions;
+}
+
 async function gatherCodexSessions(homeDir, maxAgeDays, titleIndex = new Map()) {
   const sessionsDir = join(homeDir, '.codex', 'sessions');
   if (!existsSync(sessionsDir)) {
@@ -371,6 +504,7 @@ export async function gatherSessions(options = {}) {
   const results = await Promise.allSettled([
     gatherClaudeSessions(homeDir, maxAgeDays, claudeMetadata),
     gatherCodexSessions(homeDir, maxAgeDays, codexTitles),
+    gatherGrokSessions(homeDir, maxAgeDays),
   ]);
   const sessions = [];
 

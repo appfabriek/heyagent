@@ -12,6 +12,7 @@ import { TelegramApi, TelegramApiError } from './telegram-api.js';
 import { createOnboardingSession } from './token-web-intake.js';
 import { runClaudePrompt } from './providers/claude-provider.js';
 import { runCodexPrompt } from './providers/codex-provider.js';
+import { runGrokPrompt } from './providers/grok-provider.js';
 import { applyDefaultBypassArgs } from './args.js';
 import { formatSleepInhibitorStatus, startSleepInhibitor } from './sleep-inhibitor.js';
 import { gatherSessions } from './sessions.js';
@@ -25,7 +26,7 @@ const SESSION_PICKER_LIMIT = 20;
 const RECENT_SESSION_PICKER_LIMIT = 10;
 const SESSION_BUTTON_MAX_LENGTH = 64;
 const TELEGRAM_POLL_TIMEOUT_SECONDS = 2;
-const PROVIDER_ORDER = ['claude', 'codex'];
+const PROVIDER_ORDER = ['claude', 'codex', 'grok'];
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -48,6 +49,9 @@ function getCurrentSessionId(config, provider) {
   if (provider === 'claude') {
     return config.claudeLastSessionId || null;
   }
+  if (provider === 'grok') {
+    return config.grokLastSessionId || null;
+  }
   return null;
 }
 
@@ -64,6 +68,9 @@ function formatProviderName(provider) {
   }
   if (provider === 'codex') {
     return 'Codex';
+  }
+  if (provider === 'grok') {
+    return 'Grok';
   }
   return String(provider || 'Provider');
 }
@@ -82,7 +89,7 @@ function normalizeProviderList(providers, fallback = PROVIDER_ORDER) {
 function getSessionProviders(sessions) {
   const providers = new Set();
   for (const session of Array.isArray(sessions) ? sessions : []) {
-    if (session?.agentType === 'claude' || session?.agentType === 'codex') {
+    if (session?.agentType === 'claude' || session?.agentType === 'codex' || session?.agentType === 'grok') {
       providers.add(session.agentType);
     }
   }
@@ -105,6 +112,7 @@ function createTelegramBotCommands(visibleProviders = PROVIDER_ORDER) {
     { command: 'stop', description: 'Stop current execution' },
     providers.has('claude') ? { command: 'claude', description: 'Switch to Claude' } : null,
     providers.has('codex') ? { command: 'codex', description: 'Switch to Codex' } : null,
+    providers.has('grok') ? { command: 'grok', description: 'Switch to Grok' } : null,
     { command: 'projects', description: 'Choose project' },
     { command: 'sessions', description: 'Choose session' },
     { command: 'status', description: 'Show current status' },
@@ -432,14 +440,18 @@ class Bridge {
     if (this.provider === 'claude') {
       this.config.set('claudeLastSessionId', normalized);
     }
+    if (this.provider === 'grok') {
+      this.config.set('grokLastSessionId', normalized);
+    }
   }
 
   switchProvider(provider) {
-    if (provider !== 'claude' && provider !== 'codex') {
+    if (provider !== 'claude' && provider !== 'codex' && provider !== 'grok') {
       throw new Error(`Unsupported provider: ${provider}`);
     }
 
-    const rawArgs = provider === 'claude' ? this.config.claudeArgs : this.config.codexArgs;
+    const rawArgs =
+      provider === 'claude' ? this.config.claudeArgs : provider === 'codex' ? this.config.codexArgs : this.config.grokArgs;
     const effective = applyDefaultBypassArgs(provider, rawArgs);
 
     this.provider = provider;
@@ -448,6 +460,7 @@ class Bridge {
       provider,
       claudeArgs: provider === 'claude' ? effective.providerArgs : this.config.claudeArgs,
       codexArgs: provider === 'codex' ? effective.providerArgs : this.config.codexArgs,
+      grokArgs: provider === 'grok' ? effective.providerArgs : this.config.grokArgs,
     });
 
     return effective;
@@ -550,6 +563,7 @@ class Bridge {
           '/stop - stop current execution and clear queued Telegram messages',
           '/claude - switch to Claude provider',
           '/codex - switch to Codex provider',
+          '/grok - switch to Grok provider',
           '/projects - choose a project, then continue or start a session',
           '/sessions or /sessies - choose one of the 10 most recent sessions in Telegram',
           '/say <text> - send a raw message to Telegram',
@@ -596,6 +610,12 @@ class Bridge {
     if (line === '/codex' || line.startsWith('/codex ')) {
       const argument = line.slice('/codex'.length).trim();
       await this.handleProviderSwitchCommand('codex', argument, 'cli');
+      return;
+    }
+
+    if (line === '/grok' || line.startsWith('/grok ')) {
+      const argument = line.slice('/grok'.length).trim();
+      await this.handleProviderSwitchCommand('grok', argument, 'cli');
       return;
     }
 
@@ -873,6 +893,9 @@ class Bridge {
     if (this.provider === 'claude') {
       updates.claudeLastSessionId = null;
     }
+    if (this.provider === 'grok') {
+      updates.grokLastSessionId = null;
+    }
 
     this.forceNewNextPrompt = true;
     this.selectedSessionCwd = null;
@@ -1132,13 +1155,13 @@ class Bridge {
   }
 
   async showSessionPicker() {
-    this.logCliEvent('Session picker', 'loading latest Claude and Codex sessions');
+    this.logCliEvent('Session picker', 'loading latest Claude, Codex, and Grok sessions');
     const sessions = await this.gatherSessions();
     this.visibleProviders = resolveVisibleProviders(sessions, this.provider);
     const recentSessions = sessions.slice(0, RECENT_SESSION_PICKER_LIMIT);
 
     if (recentSessions.length === 0) {
-      await this.safeSendMessage('Geen Claude- of Codex-sessies gevonden.');
+      await this.safeSendMessage('Geen Claude-, Codex- of Grok-sessies gevonden.');
       return;
     }
 
@@ -1154,13 +1177,13 @@ class Bridge {
   }
 
   async showProjectPicker() {
-    this.logCliEvent('Project picker', 'loading Claude and Codex projects');
+    this.logCliEvent('Project picker', 'loading Claude, Codex, and Grok projects');
     const sessions = await this.gatherSessions();
     this.visibleProviders = resolveVisibleProviders(sessions, this.provider);
     const groups = groupSessionsByProject(sessions);
 
     if (groups.length === 0) {
-      await this.safeSendMessage('Geen Claude- of Codex-projecten gevonden.');
+      await this.safeSendMessage('Geen Claude-, Codex- of Grok-projecten gevonden.');
       return;
     }
 
@@ -1250,7 +1273,7 @@ class Bridge {
       return;
     }
 
-    if (entry.provider !== 'claude' && entry.provider !== 'codex') {
+    if (entry.provider !== 'claude' && entry.provider !== 'codex' && entry.provider !== 'grok') {
       await this.answerCallback(callback.callbackQueryId, 'Onbekende provider');
       await this.safeSendMessage(`Unsupported session provider: ${entry.provider || 'unknown'}`);
       return;
@@ -1289,7 +1312,7 @@ class Bridge {
       return;
     }
 
-    if (session.agentType !== 'claude' && session.agentType !== 'codex') {
+    if (session.agentType !== 'claude' && session.agentType !== 'codex' && session.agentType !== 'grok') {
       await this.answerCallback(callback.callbackQueryId, 'Onbekende provider');
       await this.safeSendMessage(`Unsupported session provider: ${session.agentType || 'unknown'}`);
       return;
@@ -1459,6 +1482,7 @@ class Bridge {
           '/stop - stop current execution and clear queued messages',
           '/claude - switch to Claude provider',
           '/codex - switch to Codex provider',
+          '/grok - switch to Grok provider',
           '/projects - choose a project, then continue or start a session',
           '/sessions or /sessies - choose one of the 10 most recent sessions',
           '/status - show current status',
@@ -1483,6 +1507,11 @@ class Bridge {
 
     if (command === '/codex') {
       await this.handleProviderSwitchCommand('codex', argument, 'telegram');
+      return;
+    }
+
+    if (command === '/grok') {
+      await this.handleProviderSwitchCommand('grok', argument, 'telegram');
       return;
     }
 
@@ -1542,6 +1571,19 @@ class Bridge {
         cwd,
         abortSignal,
         sessionId: this.config.codexLastSessionId,
+        onSessionId: sessionId => {
+          this.setBoundSessionId(sessionId);
+        },
+      });
+    }
+
+    if (this.provider === 'grok') {
+      return runGrokPrompt(prompt, {
+        resume,
+        extraArgs: this.providerArgs,
+        cwd,
+        abortSignal,
+        sessionId: this.config.grokLastSessionId,
         onSessionId: sessionId => {
           this.setBoundSessionId(sessionId);
         },
