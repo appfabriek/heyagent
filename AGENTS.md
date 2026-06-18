@@ -7,8 +7,10 @@ This file helps AI agents (Cursor, Claude Code, Codex, Grok, etc.) understand, d
 HeyAgent is a **local Telegram bridge** for CLI coding agents. Users send Telegram messages from their phone; HeyAgent runs `claude`, `codex`, or `grok` on the Mac and sends the response back.
 
 **Repository:** https://github.com/appfabriek/heyagent  
-**npm package:** `heyagent` (CLI command: `hey`)  
+**Install:** `npm install -g github:appfabriek/heyagent` (CLI command: `hey`)  
 **Entry point:** `bin/hey.js` → `src/bridge.js`
+
+> The npm package `heyagent` on npmjs.com is the older upstream release. This fork adds Grok, voice transcription, and the hands-free session picker. Always install from `github:appfabriek/heyagent`.
 
 ## Primary use cases
 

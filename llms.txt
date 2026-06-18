@@ -5,8 +5,8 @@
 ## Repository
 
 - GitHub: https://github.com/appfabriek/heyagent
-- npm: https://www.npmjs.com/package/heyagent
 - CLI command: `hey`
+- Do NOT use `npm install -g heyagent` — that installs the older upstream package without Grok or voice notes
 
 ## What it does
 
@@ -24,7 +24,7 @@ Fully local. Config at ~/.heyagent/config.json. No hosted backend.
 
 ## Install
 
-npm install -g heyagent
+npm install -g github:appfabriek/heyagent
 hey grok    # or: hey claude / hey codex
 
 ## Documentation

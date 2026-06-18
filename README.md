@@ -15,13 +15,23 @@ Fully free, open source, and local — no hosted backend, no message storage in 
 
 ## Quick start
 
+Install from this repository (not the older `heyagent` package on npm — that is upstream without Grok, voice notes, or the hands-free session picker):
+
 ```bash
-npm install -g heyagent
+npm install -g github:appfabriek/heyagent
 
 # Pick your default agent (all three work the same way)
 hey claude
 hey codex
 hey grok
+```
+
+Alternative from a local clone:
+
+```bash
+git clone https://github.com/appfabriek/heyagent.git
+cd heyagent
+npm install -g .
 ```
 
 On first run, HeyAgent walks you through Telegram bot setup (phone QR flow or manual token paste). Then send any message in Telegram to talk to your agent.

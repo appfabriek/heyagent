@@ -36,7 +36,7 @@ Examples:
   hey claude --model sonnet
   hey codex --model gpt-5-codex
 
-See more: https://heyagent.dev
+See more: https://github.com/appfabriek/heyagent
 `);
 }
 
