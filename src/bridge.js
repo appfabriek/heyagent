@@ -12,6 +12,7 @@ import { TelegramApi, TelegramApiError } from './telegram-api.js';
 import { createOnboardingSession } from './token-web-intake.js';
 import { runClaudePrompt } from './providers/claude-provider.js';
 import { runCodexPrompt } from './providers/codex-provider.js';
+import { runGrokPrompt } from './providers/grok-provider.js';
 import { applyDefaultBypassArgs } from './args.js';
 import { formatSleepInhibitorStatus, startSleepInhibitor } from './sleep-inhibitor.js';
 import { SessionPicker, normalizeCommandName } from './session-picker.js';
@@ -43,6 +44,9 @@ function getCurrentSessionId(config, provider) {
   if (provider === 'claude') {
     return config.claudeLastSessionId || null;
   }
+  if (provider === 'grok') {
+    return config.grokLastSessionId || null;
+  }
   return null;
 }
 
@@ -59,6 +63,9 @@ function formatProviderName(provider) {
   }
   if (provider === 'codex') {
     return 'Codex';
+  }
+  if (provider === 'grok') {
+    return 'Grok';
   }
   return String(provider || 'Provider');
 }
@@ -252,14 +259,18 @@ class Bridge {
     if (this.provider === 'claude') {
       this.config.set('claudeLastSessionId', normalized);
     }
+    if (this.provider === 'grok') {
+      this.config.set('grokLastSessionId', normalized);
+    }
   }
 
   switchProvider(provider) {
-    if (provider !== 'claude' && provider !== 'codex') {
+    if (provider !== 'claude' && provider !== 'codex' && provider !== 'grok') {
       throw new Error(`Unsupported provider: ${provider}`);
     }
 
-    const rawArgs = provider === 'claude' ? this.config.claudeArgs : this.config.codexArgs;
+    const rawArgs =
+      provider === 'claude' ? this.config.claudeArgs : provider === 'codex' ? this.config.codexArgs : this.config.grokArgs;
     const effective = applyDefaultBypassArgs(provider, rawArgs);
 
     this.provider = provider;
@@ -268,6 +279,7 @@ class Bridge {
       provider,
       claudeArgs: provider === 'claude' ? effective.providerArgs : this.config.claudeArgs,
       codexArgs: provider === 'codex' ? effective.providerArgs : this.config.codexArgs,
+      grokArgs: provider === 'grok' ? effective.providerArgs : this.config.grokArgs,
     });
 
     return effective;
@@ -370,6 +382,7 @@ class Bridge {
           '/stop - stop current execution and clear queued Telegram messages',
           '/claude - switch to Claude provider',
           '/codex - switch to Codex provider',
+          '/grok - switch to Grok provider',
           '/projects - choose a project, then continue or start a session',
           '/sessions - choose one of the 10 most recent sessions in Telegram',
           '/say <text> - send a raw message to Telegram',
@@ -416,6 +429,12 @@ class Bridge {
     if (line === '/codex' || line.startsWith('/codex ')) {
       const argument = line.slice('/codex'.length).trim();
       await this.handleProviderSwitchCommand('codex', argument, 'cli');
+      return;
+    }
+
+    if (line === '/grok' || line.startsWith('/grok ')) {
+      const argument = line.slice('/grok'.length).trim();
+      await this.handleProviderSwitchCommand('grok', argument, 'cli');
       return;
     }
 
@@ -671,6 +690,9 @@ class Bridge {
     }
     if (this.provider === 'claude') {
       updates.claudeLastSessionId = null;
+    }
+    if (this.provider === 'grok') {
+      updates.grokLastSessionId = null;
     }
 
     this.forceNewNextPrompt = true;
@@ -1042,6 +1064,7 @@ class Bridge {
           '/stop - stop current execution and clear queued messages',
           '/claude - switch to Claude provider',
           '/codex - switch to Codex provider',
+          '/grok - switch to Grok provider',
           '/projects - choose a project, then continue or start a session',
           '/sessions - choose one of the 10 most recent sessions',
           '/status - show current status',
@@ -1066,6 +1089,11 @@ class Bridge {
 
     if (command === '/codex') {
       await this.handleProviderSwitchCommand('codex', argument, 'telegram');
+      return;
+    }
+
+    if (command === '/grok') {
+      await this.handleProviderSwitchCommand('grok', argument, 'telegram');
       return;
     }
 
@@ -1125,6 +1153,19 @@ class Bridge {
         cwd,
         abortSignal,
         sessionId: this.config.codexLastSessionId,
+        onSessionId: sessionId => {
+          this.setBoundSessionId(sessionId);
+        },
+      });
+    }
+
+    if (this.provider === 'grok') {
+      return runGrokPrompt(prompt, {
+        resume,
+        extraArgs: this.providerArgs,
+        cwd,
+        abortSignal,
+        sessionId: this.config.grokLastSessionId,
         onSessionId: sessionId => {
           this.setBoundSessionId(sessionId);
         },

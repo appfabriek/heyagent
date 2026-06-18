@@ -14,11 +14,12 @@ const logger = new Logger('hey');
 
 function showHelp() {
   console.log(`
-HeyAgent: Telegram bridge for Claude Code and Codex.
+HeyAgent: Telegram bridge for Claude Code, Codex, and Grok.
 
 Usage:
   hey claude [provider-args...] [--new] [--session <session-id>]
   hey codex [provider-args...] [--new] [--session <session-id>]
+  hey grok [provider-args...] [--new] [--session <session-id>]
   hey status
   hey reset              Reset Telegram setup (bot token + chat pairing)
   hey --version          Show version number
@@ -26,9 +27,12 @@ Usage:
 Examples:
   hey claude                           (resumes latest session)
   hey codex                            (resumes latest session)
+  hey grok                             (resumes latest session)
   hey claude --new                     (creates new session)
   hey codex --new                      (creates new session)
+  hey grok --new                       (creates new session)
   hey claude --session <session-id>    (resumes given session)
+  hey grok --session <session-id>      (resumes given session)
   hey claude --model sonnet
   hey codex --model gpt-5-codex
 
@@ -47,7 +51,7 @@ function parseModelShorthand(provider, providerArgs) {
     return args;
   }
 
-  if (provider === 'claude' || provider === 'codex') {
+  if (provider === 'claude' || provider === 'codex' || provider === 'grok') {
     return ['--model', token];
   }
 
@@ -138,13 +142,16 @@ function maskToken(token) {
 function showStatus(config) {
   const paired = config.isPaired();
   const provider = config.provider;
-  const providerArgs = provider === 'codex' ? config.codexArgs : provider === 'claude' ? config.claudeArgs : [];
+  const providerArgs =
+    provider === 'codex' ? config.codexArgs : provider === 'claude' ? config.claudeArgs : provider === 'grok' ? config.grokArgs : [];
   const currentSession =
     provider === 'codex'
       ? config.codexLastSessionId
       : provider === 'claude'
         ? config.claudeLastSessionId
-        : config.codexLastSessionId || config.claudeLastSessionId;
+        : provider === 'grok'
+          ? config.grokLastSessionId
+          : config.grokLastSessionId || config.codexLastSessionId || config.claudeLastSessionId;
 
   console.log(`Provider: ${provider || 'not set'}`);
   console.log(`Telegram bot: ${config.telegramBotUsername ? `@${config.telegramBotUsername}` : 'not set'}`);
@@ -214,14 +221,15 @@ async function main() {
     return;
   }
 
-  if (command === 'claude' || command === 'codex') {
+  if (command === 'claude' || command === 'codex' || command === 'grok') {
     const config = new Config();
     const cliProviderArgs = args.slice(1);
     const extracted = extractRuntimeOptions(cliProviderArgs);
     if (extracted.startMode === 'new' && extracted.sessionId) {
       throw new Error('Cannot combine --new with --session');
     }
-    const savedProviderArgs = command === 'claude' ? config.claudeArgs : config.codexArgs;
+    const savedProviderArgs =
+      command === 'claude' ? config.claudeArgs : command === 'codex' ? config.codexArgs : config.grokArgs;
     const providerArgs = extracted.providerArgs.length > 0 ? extracted.providerArgs : savedProviderArgs;
     const normalizedProviderArgs = parseModelShorthand(command, providerArgs);
     const effectiveArgs = applyDefaultBypassArgs(command, normalizedProviderArgs);
@@ -229,6 +237,7 @@ async function main() {
       provider: command,
       claudeArgs: command === 'claude' ? effectiveArgs.providerArgs : config.claudeArgs,
       codexArgs: command === 'codex' ? effectiveArgs.providerArgs : config.codexArgs,
+      grokArgs: command === 'grok' ? effectiveArgs.providerArgs : config.grokArgs,
     });
 
     if (effectiveArgs.defaultBypassApplied) {

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { gatherSessions } from './sessions.js';
 
-const PROVIDER_ORDER = ['claude', 'codex'];
+const PROVIDER_ORDER = ['claude', 'codex', 'grok'];
 const SESSION_PICKER_LIMIT = 20;
 const RECENT_SESSION_PICKER_LIMIT = 10;
 const SESSION_BUTTON_MAX_LENGTH = 64;
@@ -12,6 +12,9 @@ function formatProviderName(provider) {
   }
   if (provider === 'codex') {
     return 'Codex';
+  }
+  if (provider === 'grok') {
+    return 'Grok';
   }
   return String(provider || 'Provider');
 }
@@ -30,7 +33,7 @@ function normalizeProviderList(providers, fallback = PROVIDER_ORDER) {
 function getSessionProviders(sessions) {
   const providers = new Set();
   for (const session of Array.isArray(sessions) ? sessions : []) {
-    if (session?.agentType === 'claude' || session?.agentType === 'codex') {
+    if (session?.agentType === 'claude' || session?.agentType === 'codex' || session?.agentType === 'grok') {
       providers.add(session.agentType);
     }
   }
@@ -53,6 +56,7 @@ function createTelegramBotCommands(visibleProviders = PROVIDER_ORDER) {
     { command: 'stop', description: 'Stop current execution' },
     providers.has('claude') ? { command: 'claude', description: 'Switch to Claude' } : null,
     providers.has('codex') ? { command: 'codex', description: 'Switch to Codex' } : null,
+    providers.has('grok') ? { command: 'grok', description: 'Switch to Grok' } : null,
     { command: 'projects', description: 'Choose project' },
     { command: 'sessions', description: 'Choose session' },
     { command: 'status', description: 'Show current status' },
@@ -291,13 +295,13 @@ class SessionPicker {
   }
 
   async showSessionPicker() {
-    this.host.logCliEvent('Session picker', 'loading latest Claude and Codex sessions');
+    this.host.logCliEvent('Session picker', 'loading latest Claude, Codex, and Grok sessions');
     const sessions = await this.gatherSessions();
     this.visibleProviders = resolveVisibleProviders(sessions, this.host.provider);
     const recentSessions = sessions.slice(0, RECENT_SESSION_PICKER_LIMIT);
 
     if (recentSessions.length === 0) {
-      await this.host.safeSendMessage('No Claude or Codex sessions found.');
+      await this.host.safeSendMessage('No Claude, Codex, or Grok sessions found.');
       return;
     }
 
@@ -313,13 +317,13 @@ class SessionPicker {
   }
 
   async showProjectPicker() {
-    this.host.logCliEvent('Project picker', 'loading Claude and Codex projects');
+    this.host.logCliEvent('Project picker', 'loading Claude, Codex, and Grok projects');
     const sessions = await this.gatherSessions();
     this.visibleProviders = resolveVisibleProviders(sessions, this.host.provider);
     const groups = groupSessionsByProject(sessions);
 
     if (groups.length === 0) {
-      await this.host.safeSendMessage('Geen Claude- of Codex-projecten gevonden.');
+      await this.host.safeSendMessage('Geen Claude-, Codex- of Grok-projecten gevonden.');
       return;
     }
 
@@ -409,7 +413,7 @@ class SessionPicker {
       return;
     }
 
-    if (entry.provider !== 'claude' && entry.provider !== 'codex') {
+    if (entry.provider !== 'claude' && entry.provider !== 'codex' && entry.provider !== 'grok') {
       await this.answerCallback(callback.callbackQueryId, 'Onbekende provider');
       await this.host.safeSendMessage(`Unsupported session provider: ${entry.provider || 'unknown'}`);
       return;
@@ -448,7 +452,7 @@ class SessionPicker {
       return;
     }
 
-    if (session.agentType !== 'claude' && session.agentType !== 'codex') {
+    if (session.agentType !== 'claude' && session.agentType !== 'codex' && session.agentType !== 'grok') {
       await this.answerCallback(callback.callbackQueryId, 'Onbekende provider');
       await this.host.safeSendMessage(`Unsupported session provider: ${session.agentType || 'unknown'}`);
       return;

@@ -10,6 +10,7 @@ class Config {
       provider: null,
       claudeArgs: [],
       codexArgs: [],
+      grokArgs: [],
       telegramBotToken: null,
       telegramBotUsername: null,
       telegramBotId: null,
@@ -18,6 +19,7 @@ class Config {
       telegramUpdateCursor: 0,
       claudeLastSessionId: null,
       codexLastSessionId: null,
+      grokLastSessionId: null,
     };
     this._data = { ...this.defaults };
     this.load();
@@ -73,6 +75,11 @@ class Config {
     return Array.isArray(value) ? value : [];
   }
 
+  get grokArgs() {
+    const value = this._data.grokArgs ?? this.defaults.grokArgs;
+    return Array.isArray(value) ? value : [];
+  }
+
   get telegramBotToken() {
     return this._data.telegramBotToken ?? this.defaults.telegramBotToken;
   }
@@ -105,6 +112,10 @@ class Config {
     return this._data.claudeLastSessionId ?? this.defaults.claudeLastSessionId;
   }
 
+  get grokLastSessionId() {
+    return this._data.grokLastSessionId ?? this.defaults.grokLastSessionId;
+  }
+
   isPaired() {
     return Boolean(this.telegramBotToken && this.telegramChatId);
   }
@@ -121,6 +132,7 @@ class Config {
       telegramUpdateCursor: 0,
       claudeLastSessionId: null,
       codexLastSessionId: null,
+      grokLastSessionId: null,
     });
   }
 }
