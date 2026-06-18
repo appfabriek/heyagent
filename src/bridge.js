@@ -1037,6 +1037,14 @@ class Bridge {
         await this.safeSendMessage(response, { from: providerLabel });
       } catch (error) {
         if (abortController.signal.aborted || this.isPromptAbortError(error)) {
+          if (source === 'telegram') {
+            const abortReason = this.activePromptAbortReason;
+            if (abortReason === 'session_switch') {
+              await this.safeSendMessage(`${providerLabel} request cancelled because you switched session.`);
+            } else if (abortReason === 'manual_stop') {
+              await this.safeSendMessage(`${providerLabel} request stopped.`);
+            }
+          }
           return;
         }
 
