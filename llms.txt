@@ -1,0 +1,53 @@
+# HeyAgent
+
+> Local Telegram bridge for Claude Code, Codex, and Grok CLI agents. Voice notes, session pickers, provider switching — no server required.
+
+## Repository
+
+- GitHub: https://github.com/appfabriek/heyagent
+- npm: https://www.npmjs.com/package/heyagent
+- CLI command: `hey`
+
+## What it does
+
+HeyAgent connects Telegram to AI coding agents on your Mac:
+
+- Send prompts from your phone or CarPlay via Telegram
+- Get agent responses in the same chat
+- Switch between Claude Code, Codex, and Grok with `/claude`, `/codex`, `/grok`
+- Pick projects and sessions with `/projects` and `/sessions`
+- Transcribe voice notes locally with Whisper (ffmpeg + whisper-cli)
+- Hands-free session picker: `go to project myapp` → reply `2`
+- Run as a background service (macOS launchd)
+
+Fully local. Config at ~/.heyagent/config.json. No hosted backend.
+
+## Install
+
+npm install -g heyagent
+hey grok    # or: hey claude / hey codex
+
+## Documentation
+
+- README.md — full user guide: setup, commands, voice notes, CarPlay, background service
+- AGENTS.md — architecture and contribution guide for AI coding agents
+
+## Prerequisites
+
+- Node.js 18+
+- claude / codex / grok CLI on PATH (whichever providers you use)
+- ffmpeg + whisper-cli for voice transcription (optional)
+- cloudflared for phone onboarding QR flow (optional)
+
+## Key source files
+
+- bin/hey.js — CLI entry
+- src/bridge.js — Telegram polling and message routing
+- src/voice-transcriber.js — local Whisper transcription
+- src/voice-session-picker.js — numbered voice session picker
+- src/sessions.js — local session discovery
+- src/providers/ — claude, codex, grok execution
+
+## Keywords
+
+telegram bridge, claude code telegram, codex cli telegram, grok cli telegram, voice note ai coding, whisper telegram, hands-free coding agent, carplay ai assistant, local ai bridge, coding agent mobile

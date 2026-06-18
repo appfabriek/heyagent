@@ -60,7 +60,8 @@ package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
-# Documentation (keep README.md)
+# Documentation (keep README.md and AGENTS.md)
 docs/
 *.md
 !README.md
+!AGENTS.md

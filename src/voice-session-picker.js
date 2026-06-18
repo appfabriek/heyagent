@@ -1,9 +1,6 @@
 const VOICE_SESSION_LIST_LIMIT = 10;
 
-const PROJECT_NAVIGATION_PATTERNS = [
-  /^(?:ga\s+naar|go\s+to|open|switch\s+naar|naar)\s+project\s+(.+)$/i,
-  /^project\s+(.+)$/i,
-];
+const PROJECT_NAVIGATION_PATTERNS = [/^(?:ga\s+naar|go\s+to|open|switch\s+naar|naar)\s+project\s+(.+)$/i, /^project\s+(.+)$/i];
 
 const VOICE_CANCEL_PATTERNS = [/^(?:annuleer|cancel|stop)$/i, /^\/stop$/i, /^\/cancel$/i];
 
@@ -117,7 +114,7 @@ function formatSessionTitle(session) {
     .trim();
 }
 
-export function formatVoiceProjectPrompt(project, sessions, options = {}) {
+export function formatVoiceProjectPrompt(project, sessions) {
   const projectName = String(project || 'unknown').trim() || 'unknown';
   const list = (Array.isArray(sessions) ? sessions : []).slice(0, VOICE_SESSION_LIST_LIMIT);
 

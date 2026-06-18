@@ -1,7 +1,7 @@
 {
   "name": "heyagent",
   "version": "2.0.0",
-  "description": "HeyAgent.dev - Bidirectional Telegram bridge for Claude Code and Codex",
+  "description": "Local Telegram bridge for Claude Code, Codex, and Grok — voice notes, session pickers, hands-free coding",
   "main": "src/bridge.js",
   "type": "module",
   "engines": {
@@ -33,27 +33,39 @@
     "release:beta": "npm run check && npm version prerelease --preid=beta && npm publish --tag beta && git push --follow-tags"
   },
   "keywords": [
-    "claude",
-    "codex",
+    "heyagent",
     "telegram",
+    "telegram-bot",
+    "claude",
+    "claude-code",
+    "codex",
+    "grok",
+    "coding-agent",
+    "ai-agent",
     "cli",
-    "terminal",
-    "heyagent"
+    "voice",
+    "whisper",
+    "hands-free",
+    "carplay",
+    "local",
+    "bridge"
   ],
   "author": "HeyAgent Team",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/gergomiklos/heyagent.git"
+    "url": "https://github.com/appfabriek/heyagent.git"
   },
   "homepage": "https://heyagent.dev",
   "bugs": {
-    "url": "https://github.com/gergomiklos/heyagent/issues"
+    "url": "https://github.com/appfabriek/heyagent/issues"
   },
   "files": [
     "bin/",
     "src/",
     "README.md",
+    "AGENTS.md",
+    "llms.txt",
     "LICENSE"
   ],
   "dependencies": {

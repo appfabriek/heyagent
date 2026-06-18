@@ -320,7 +320,8 @@ export function parseGrokSessionDir(sessionDir, cwdKey, options = {}) {
   return {
     id: sessionId,
     agentType: 'grok',
-    title: truncate(options.title, 80) || truncate(summary.session_summary, 80) || truncate(summary.generated_title, 80) || truncate(firstUserText, 80),
+    title:
+      truncate(options.title, 80) || truncate(summary.session_summary, 80) || truncate(summary.generated_title, 80) || truncate(firstUserText, 80),
     lastUserMessage: truncate(lastUserText, 120),
     lastUserMessageAt,
     project: projectNameFromPath(cwd),

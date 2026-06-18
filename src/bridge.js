@@ -32,8 +32,7 @@ const BOTFATHER_URL = 'https://t.me/BotFather';
 const SETUP_MODE_PHONE = 'phone_onboarding';
 const SETUP_MODE_MANUAL = 'manual_fallback';
 const ATTACHMENT_DOWNLOAD_DIR = path.join(os.tmpdir(), 'heyagent-files');
-const VOICE_NOTE_HINT_TEXT =
-  'Hint: send a Telegram voice note for hands-free input (transcribed locally with Whisper).';
+const VOICE_NOTE_HINT_TEXT = 'Hint: send a Telegram voice note for hands-free input (transcribed locally with Whisper).';
 const VOICE_TRANSCRIPTION_UNAVAILABLE_TEXT =
   'Voice transcription is unavailable. Install ffmpeg and whisper-cli (e.g. brew install ffmpeg whisper-cpp), or type your message instead.';
 const SESSION_PICKER_LIMIT = 20;
@@ -272,14 +271,7 @@ function makePairCode() {
   }
 }
 
-function buildStatusText(
-  config,
-  provider,
-  providerArgs = [],
-  sleepInhibitorState = null,
-  selectedSessionCwd = null,
-  voiceTranscriberState = null
-) {
+function buildStatusText(config, provider, providerArgs = [], sleepInhibitorState = null, selectedSessionCwd = null, voiceTranscriberState = null) {
   const bot = config.telegramBotUsername ? `@${config.telegramBotUsername}` : 'not set';
   const sessionId = getCurrentSessionId(config, provider);
   const argsText = Array.isArray(providerArgs) && providerArgs.length > 0 ? providerArgs.join(' ') : '(none)';
@@ -478,8 +470,7 @@ class Bridge {
       throw new Error(`Unsupported provider: ${provider}`);
     }
 
-    const rawArgs =
-      provider === 'claude' ? this.config.claudeArgs : provider === 'codex' ? this.config.codexArgs : this.config.grokArgs;
+    const rawArgs = provider === 'claude' ? this.config.claudeArgs : provider === 'codex' ? this.config.codexArgs : this.config.grokArgs;
     const effective = applyDefaultBypassArgs(provider, rawArgs);
 
     this.provider = provider;
@@ -594,7 +585,7 @@ class Bridge {
           '/grok - switch to Grok provider',
           '/projects - choose a project, then continue or start a session',
           '/sessions or /sessies - choose one of the 10 most recent sessions in Telegram',
-          'ga naar project <naam> - voice-friendly numbered session picker',
+          'go to project <name> - voice-friendly numbered session picker',
           '/say <text> - send a raw message to Telegram',
           '/ask <prompt> - run prompt through provider and send response to Telegram',
           '/exit - stop HeyAgent',
@@ -607,14 +598,7 @@ class Bridge {
 
     if (line === '/status') {
       this.writeCliLine(
-        buildStatusText(
-          this.config,
-          this.provider,
-          this.providerArgs,
-          this.sleepInhibitorState,
-          this.selectedSessionCwd,
-          this.voiceTranscriberState
-        )
+        buildStatusText(this.config, this.provider, this.providerArgs, this.sleepInhibitorState, this.selectedSessionCwd, this.voiceTranscriberState)
       );
       return;
     }
@@ -1370,7 +1354,12 @@ class Bridge {
     const project = session.project || 'unknown';
     const title = session.title || session.lastUserMessage || session.id;
     await this.safeSendMessage(
-      [`${providerLabel}-sessie geselecteerd.`, `Project: ${project}`, title ? `Titel: ${title}` : null, 'Je volgende bericht gaat verder in deze sessie.']
+      [
+        `${providerLabel}-sessie geselecteerd.`,
+        `Project: ${project}`,
+        title ? `Titel: ${title}` : null,
+        'Je volgende bericht gaat verder in deze sessie.',
+      ]
         .filter(Boolean)
         .join('\n'),
       options
@@ -1638,7 +1627,7 @@ class Bridge {
           '/grok - switch to Grok provider',
           '/projects - choose a project, then continue or start a session',
           '/sessions or /sessies - choose one of the 10 most recent sessions',
-          'ga naar project <naam> - numbered session picker for voice/CarPlay',
+          'go to project <name> - numbered session picker for voice/CarPlay',
           '/status - show current status',
           '',
           `Send any normal message to talk to ${this.provider}.`,
@@ -1681,14 +1670,7 @@ class Bridge {
 
     if (command === '/status') {
       await this.safeSendMessage(
-        buildStatusText(
-          this.config,
-          this.provider,
-          this.providerArgs,
-          this.sleepInhibitorState,
-          this.selectedSessionCwd,
-          this.voiceTranscriberState
-        )
+        buildStatusText(this.config, this.provider, this.providerArgs, this.sleepInhibitorState, this.selectedSessionCwd, this.voiceTranscriberState)
       );
       return;
     }

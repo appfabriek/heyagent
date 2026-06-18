@@ -228,8 +228,7 @@ async function main() {
     if (extracted.startMode === 'new' && extracted.sessionId) {
       throw new Error('Cannot combine --new with --session');
     }
-    const savedProviderArgs =
-      command === 'claude' ? config.claudeArgs : command === 'codex' ? config.codexArgs : config.grokArgs;
+    const savedProviderArgs = command === 'claude' ? config.claudeArgs : command === 'codex' ? config.codexArgs : config.grokArgs;
     const providerArgs = extracted.providerArgs.length > 0 ? extracted.providerArgs : savedProviderArgs;
     const normalizedProviderArgs = parseModelShorthand(command, providerArgs);
     const effectiveArgs = applyDefaultBypassArgs(command, normalizedProviderArgs);
