@@ -4,10 +4,29 @@ function pickValue(candidate) {
   return typeof candidate === 'string' ? candidate.trim() : '';
 }
 
-function parseGrokJsonOutput(stdout) {
+function extractGrokFields(parsed) {
+  if (!parsed || typeof parsed !== 'object') {
+    return { text: '', sessionId: '' };
+  }
+
+  return {
+    text: pickValue(parsed.text) || pickValue(parsed.result) || pickValue(parsed.output) || pickValue(parsed.message),
+    sessionId: pickValue(parsed.sessionId) || pickValue(parsed.session_id),
+  };
+}
+
+function parseGrokJsonObject(stdout) {
   const text = String(stdout || '').trim();
   if (!text) {
-    return { text: '', sessionId: '' };
+    return null;
+  }
+
+  if (text.startsWith('{')) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      // Fall through to NDJSON parsing.
+    }
   }
 
   const lines = text
@@ -22,18 +41,20 @@ function parseGrokJsonOutput(stdout) {
     }
 
     try {
-      const parsed = JSON.parse(line);
-      return {
-        text: pickValue(parsed.text) || pickValue(parsed.result) || pickValue(parsed.output),
-        sessionId: pickValue(parsed.sessionId) || pickValue(parsed.session_id),
-      };
+      return JSON.parse(line);
     } catch {
       // Keep scanning older lines.
     }
   }
 
-  return { text: '', sessionId: '' };
+  return null;
 }
+
+function parseGrokJsonOutput(stdout) {
+  return extractGrokFields(parseGrokJsonObject(stdout));
+}
+
+export { parseGrokJsonObject, parseGrokJsonOutput };
 
 export async function runGrokPrompt(prompt, options = {}) {
   const resume = Boolean(options.resume);
