@@ -8,8 +8,8 @@ import { runProcess } from './process-runner.js';
 
 const CHECK_TIMEOUT_MS = 10 * 1000;
 const TRANSCRIBE_TIMEOUT_MS = 3 * 60 * 1000;
-const DEFAULT_MODEL_NAME = 'ggml-base.en.bin';
-const DEFAULT_MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin';
+const DEFAULT_MODEL_NAME = 'ggml-base.bin';
+const DEFAULT_MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin';
 const MAX_DOWNLOAD_REDIRECTS = 5;
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_MODEL_DIR = path.join(os.homedir(), '.heyagent', 'models');

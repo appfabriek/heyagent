@@ -26,12 +26,16 @@ import {
   parseProjectNavigationIntent,
   parseSessionChoice,
 } from './voice-session-picker.js';
+import { createVoiceTranscriber, formatVoiceTranscriberStatus } from './voice-transcriber.js';
 
 const BOTFATHER_URL = 'https://t.me/BotFather';
 const SETUP_MODE_PHONE = 'phone_onboarding';
 const SETUP_MODE_MANUAL = 'manual_fallback';
 const ATTACHMENT_DOWNLOAD_DIR = path.join(os.tmpdir(), 'heyagent-files');
-const DICTATION_HINT_TEXT = 'Hint: for voice input, use your phone keyboard dictation.';
+const VOICE_NOTE_HINT_TEXT =
+  'Hint: send a Telegram voice note for hands-free input (transcribed locally with Whisper).';
+const VOICE_TRANSCRIPTION_UNAVAILABLE_TEXT =
+  'Voice transcription is unavailable. Install ffmpeg and whisper-cli (e.g. brew install ffmpeg whisper-cpp), or type your message instead.';
 const SESSION_PICKER_LIMIT = 20;
 const RECENT_SESSION_PICKER_LIMIT = 10;
 const SESSION_BUTTON_MAX_LENGTH = 64;
@@ -268,15 +272,24 @@ function makePairCode() {
   }
 }
 
-function buildStatusText(config, provider, providerArgs = [], sleepInhibitorState = null, selectedSessionCwd = null) {
+function buildStatusText(
+  config,
+  provider,
+  providerArgs = [],
+  sleepInhibitorState = null,
+  selectedSessionCwd = null,
+  voiceTranscriberState = null
+) {
   const bot = config.telegramBotUsername ? `@${config.telegramBotUsername}` : 'not set';
   const sessionId = getCurrentSessionId(config, provider);
   const argsText = Array.isArray(providerArgs) && providerArgs.length > 0 ? providerArgs.join(' ') : '(none)';
   const sleepStatus = formatSleepInhibitorStatus(sleepInhibitorState);
+  const voiceStatus = formatVoiceTranscriberStatus(voiceTranscriberState);
   return [
     `Provider: ${provider}`,
     `Args: ${argsText}`,
     `Sleep prevention: ${sleepStatus}`,
+    `Voice transcription: ${voiceStatus}`,
     `Directory: ${process.cwd()}`,
     selectedSessionCwd ? `Selected session directory: ${selectedSessionCwd}` : null,
     `Bot: ${bot}`,
@@ -354,6 +367,7 @@ class Bridge {
     this.sessionPickerCounter = 0;
     this.selectedSessionCwd = null;
     this.voiceSessionPickerState = null;
+    this.voiceTranscriberState = null;
 
     this.onSignal = () => {
       this.requestStopCurrentPrompt('shutdown');
@@ -379,6 +393,9 @@ class Bridge {
 
       await mkdir(ATTACHMENT_DOWNLOAD_DIR, { recursive: true });
 
+      this.voiceTranscriberState = await createVoiceTranscriber();
+      console.log(`Voice transcription: ${formatVoiceTranscriberStatus(this.voiceTranscriberState)}.`);
+
       const pairing = await this.ensureBridgeReady();
       this.config.setMany({
         provider: this.provider,
@@ -402,7 +419,7 @@ class Bridge {
             ? `HeyAgent connected to ${providerLabel} session ${this.initialSessionId}.`
             : `HeyAgent connected to your last ${providerLabel} session for the current folder: ${process.cwd()}`;
 
-      await this.safeSendMessage([startupHeadline, 'Send /help for available commands.', DICTATION_HINT_TEXT].join('\n\n'));
+      await this.safeSendMessage([startupHeadline, 'Send /help for available commands.', VOICE_NOTE_HINT_TEXT].join('\n\n'));
 
       this.startLocalInputLoop();
 
@@ -589,7 +606,16 @@ class Bridge {
     }
 
     if (line === '/status') {
-      this.writeCliLine(buildStatusText(this.config, this.provider, this.providerArgs, this.sleepInhibitorState, this.selectedSessionCwd));
+      this.writeCliLine(
+        buildStatusText(
+          this.config,
+          this.provider,
+          this.providerArgs,
+          this.sleepInhibitorState,
+          this.selectedSessionCwd,
+          this.voiceTranscriberState
+        )
+      );
       return;
     }
 
@@ -1542,6 +1568,29 @@ class Bridge {
     return lines.join('\n');
   }
 
+  async handleVoiceAttachmentMessage(message, fileId) {
+    if (!this.voiceTranscriberState?.available) {
+      await this.safeSendMessage(VOICE_TRANSCRIPTION_UNAVAILABLE_TEXT);
+      return;
+    }
+
+    await this.safeSendMessage('Transcribing voice note...');
+
+    try {
+      const transcript = await this.voiceTranscriberState.transcribeTelegramVoice(this.telegram, fileId);
+      const caption = String(message.caption || message.text || '').trim();
+      const promptText = caption ? `${caption}\n\n${transcript}` : transcript;
+
+      this.logCliEvent('Voice transcript', transcript);
+      await this.safeSendMessage(`"${transcript}"`);
+      await this.handleMessage(promptText);
+    } catch (error) {
+      const messageText = error?.message ? String(error.message) : String(error);
+      this.logger.error(`Voice transcription failed: ${messageText}`);
+      await this.safeSendMessage(`Failed to transcribe voice note: ${messageText}`);
+    }
+  }
+
   async handleAttachmentMessage(message) {
     const fileId = String(message.fileId || '').trim();
     if (!fileId) {
@@ -1550,11 +1599,13 @@ class Bridge {
 
     const durationText = Number.isFinite(message.durationSec) ? ` (${message.durationSec}s)` : '';
     this.logCliEvent(`Telegram -> ${message.type || 'Attachment'}`, `received${durationText}`);
-    await this.safeSendMessage('Attachment received.');
 
     if (this.isAudioAttachment(message.type)) {
-      await this.safeSendMessage(DICTATION_HINT_TEXT);
+      await this.handleVoiceAttachmentMessage(message, fileId);
+      return;
     }
+
+    await this.safeSendMessage('Attachment received.');
 
     try {
       const downloadedPath = await this.telegram.downloadFile(fileId, ATTACHMENT_DOWNLOAD_DIR);
@@ -1591,7 +1642,7 @@ class Bridge {
           '/status - show current status',
           '',
           `Send any normal message to talk to ${this.provider}.`,
-          DICTATION_HINT_TEXT,
+          VOICE_NOTE_HINT_TEXT,
         ].join('\n')
       );
       return;
@@ -1629,7 +1680,16 @@ class Bridge {
     }
 
     if (command === '/status') {
-      await this.safeSendMessage(buildStatusText(this.config, this.provider, this.providerArgs, this.sleepInhibitorState, this.selectedSessionCwd));
+      await this.safeSendMessage(
+        buildStatusText(
+          this.config,
+          this.provider,
+          this.providerArgs,
+          this.sleepInhibitorState,
+          this.selectedSessionCwd,
+          this.voiceTranscriberState
+        )
+      );
       return;
     }
 
