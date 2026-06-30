@@ -94,12 +94,63 @@ npm run check     # lint + format
 
 Tests use Node's built-in test runner. Mock filesystem paths in `test/sessions.test.js` pattern.
 
+## Controlling the launchd service (for AI agents)
+
+Users (and AI coding agents talking to them) frequently manage HeyAgent as a persistent macOS launchd job:
+
+- Plist: `~/Library/LaunchAgents/com.heyagent.bridge.plist`
+- Runs `hey grok` (or the provider saved in the plist)
+- Has `KeepAlive: true` + `RunAtLoad: true`
+
+**When the user asks you to start, stop, turn on/off "heyagent", "the bridge", "the Telegram agent", etc.:**
+
+Use `launchctl`. **Never** just `pkill`/`kill` the node process — launchd will respawn it instantly.
+
+### Commands (exact, copy-paste)
+
+**Stop / turn off**
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.heyagent.bridge.plist
+```
+
+**Start / turn on**
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.heyagent.bridge.plist
+```
+
+**Restart**
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.heyagent.bridge
+```
+
+**Verify (always do this after the action and report the result)**
+
+```bash
+launchctl list | grep -E 'hey|bridge' || echo "no hey job loaded"
+launchctl list com.heyagent.bridge 2>/dev/null || echo "job not found"
+
+ps -eo pid,ppid,lstart,command | grep -E '[n]ode .*/\.local/bin/hey ' || echo "no heyagent process"
+```
+
+**Logs (if the user reports problems)**
+
+```bash
+tail -30 ~/.heyagent/logs/service-stdout.log
+tail -10 ~/.heyagent/logs/service-stderr.log
+```
+
+See `README.md` → "Managing the background service (macOS launchd)" for the full user-facing explanation and generic plist template.
+
 ## Pitfalls
 
 - **409 Conflict:** two processes polling the same bot token — document, never run Claude Telegram plugin alongside HeyAgent
 - **Provider PATH:** background `launchd` jobs need explicit `PATH` including `~/.grok/bin` etc.
 - **Whisper model:** default is multilingual `ggml-base.bin`; downloads on first voice note
 - **Session picker limit:** 10 sessions for `/sessions`, 10 for voice picker (`VOICE_SESSION_LIST_LIMIT`)
+- **Service control:** always use `launchctl load/unload`, never raw kill on the PID (see section above)
 
 ## Search keywords
 

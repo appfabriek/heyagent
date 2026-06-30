@@ -170,9 +170,60 @@ Start with `hey claude`, `hey codex`, or `hey grok`.
 
 If phone onboarding fails, install `cloudflared` (`brew install cloudflared`) or use manual fallback.
 
-## Run as a background service (macOS)
+## Managing the background service (macOS launchd)
 
-To keep HeyAgent running after you close the terminal, use `launchd`:
+HeyAgent is commonly run as a persistent background service via macOS `launchd`. This keeps the Telegram bridge available for phone/CarPlay use even with no terminal open. Sleep prevention (`caffeinate`) is active while the service runs.
+
+### Current setup on this machine
+
+- **Label**: `com.heyagent.bridge`
+- **Runs**: `/Users/geert/.local/bin/hey grok`
+- **Working directory**: `/Users/geert/code/heyagent`
+- **Plist**: `~/Library/LaunchAgents/com.heyagent.bridge.plist`
+- **Logs**: `~/.heyagent/logs/service-stdout.log` and `service-stderr.log`
+
+### Start / stop / restart commands
+
+**Always use `launchctl` to control the service.**  
+Directly killing the node process (`kill` / `pkill`) will **not** stop it for long — the plist has `KeepAlive: true`, so launchd will immediately respawn it.
+
+```bash
+# Start / enable the bridge
+launchctl load ~/Library/LaunchAgents/com.heyagent.bridge.plist
+
+# Stop / disable the bridge (clean shutdown)
+launchctl unload ~/Library/LaunchAgents/com.heyagent.bridge.plist
+
+# Restart the service (if already loaded)
+launchctl kickstart -k gui/$(id -u)/com.heyagent.bridge
+```
+
+### Check status + verify
+
+```bash
+# Job in launchd?
+launchctl list | grep -E 'hey|bridge' || echo "no hey/bridge job"
+launchctl list com.heyagent.bridge
+
+# Running process?
+ps -eo pid,ppid,lstart,command | grep -E '[n]ode .*/\.local/bin/hey ' || echo "no heyagent process"
+
+# Live logs
+tail -f ~/.heyagent/logs/service-stdout.log
+```
+
+### AI agents / automation
+
+When the user asks things like:
+
+- "start heyagent", "turn heyagent back on", "start the bridge", "start the Telegram link"
+- "stop heyagent", "turn heyagent off", "stop the bridge"
+
+→ Run the matching `load` / `unload` command above **and verify** the result. Report back clearly (e.g. "heyagent bridge is now running (PID 12345)" or "stopped, no job/process").
+
+The generic plist template (for other machines/users) is included below for reference.
+
+### Generic plist template (for other setups)
 
 ```xml
 <!-- ~/Library/LaunchAgents/com.heyagent.bridge.plist -->
@@ -209,11 +260,9 @@ To keep HeyAgent running after you close the terminal, use `launchd`:
 ```bash
 mkdir -p ~/.heyagent/logs
 launchctl load ~/Library/LaunchAgents/com.heyagent.bridge.plist
-launchctl kickstart -k gui/$(id -u)/com.heyagent.bridge   # restart
-launchctl unload ~/Library/LaunchAgents/com.heyagent.bridge.plist
 ```
 
-Adjust `ProgramArguments`, `WorkingDirectory`, and `PATH` for your setup.
+Adjust paths for your environment. See the "AI agents" paragraph above for how coding agents should handle start/stop requests.
 
 ## Local terminal input
 
