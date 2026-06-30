@@ -102,47 +102,54 @@ Users (and AI coding agents talking to them) frequently manage HeyAgent as a per
 - Runs `hey grok` (or the provider saved in the plist)
 - Has `KeepAlive: true` + `RunAtLoad: true`
 
-**When the user asks you to start, stop, turn on/off "heyagent", "the bridge", "the Telegram agent", etc.:**
+**Key fact:** Because of `RunAtLoad: true`, the service starts automatically after login/reboot unless it is explicitly `disabled`.
 
-Use `launchctl`. **Never** just `pkill`/`kill` the node process — launchd will respawn it instantly.
+`load`/`unload` only affect the current session. Use the disable flow when the user wants it off "until I ask again".
 
-### Commands (exact, copy-paste)
+**When the user asks to start/stop "heyagent", the bridge, etc.:**
 
-**Stop / turn off**
+Use `launchctl`. **Never** just `pkill`/`kill` the node PID.
+
+### Persistent on/off (survives reboot) - preferred
+
+**Turn off persistently**
 
 ```bash
+launchctl bootout gui/$(id -u)/com.heyagent.bridge 2>/dev/null || true
+launchctl disable gui/$(id -u)/com.heyagent.bridge
+```
+
+**Turn on persistently**
+
+```bash
+launchctl enable gui/$(id -u)/com.heyagent.bridge
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.heyagent.bridge.plist
+```
+
+### Temporary (current session only)
+
+```bash
+launchctl load   ~/Library/LaunchAgents/com.heyagent.bridge.plist
 launchctl unload ~/Library/LaunchAgents/com.heyagent.bridge.plist
-```
-
-**Start / turn on**
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.heyagent.bridge.plist
-```
-
-**Restart**
-
-```bash
 launchctl kickstart -k gui/$(id -u)/com.heyagent.bridge
 ```
 
-**Verify (always do this after the action and report the result)**
+**Verify (always do this and report)**
 
 ```bash
-launchctl list | grep -E 'hey|bridge' || echo "no hey job loaded"
-launchctl list com.heyagent.bridge 2>/dev/null || echo "job not found"
+launchctl print-disabled gui/$(id -u) | grep -E 'heyagent|bridge' || echo "not disabled"
 
-ps -eo pid,ppid,lstart,command | grep -E '[n]ode .*/\.local/bin/hey ' || echo "no heyagent process"
+launchctl list | grep -E 'hey|bridge' || echo "no job"
+ps -eo pid,ppid,lstart,command | grep -E '[n]ode .*/\.local/bin/hey ' || echo "no process"
 ```
 
-**Logs (if the user reports problems)**
+**Logs**
 
 ```bash
 tail -30 ~/.heyagent/logs/service-stdout.log
-tail -10 ~/.heyagent/logs/service-stderr.log
 ```
 
-See `README.md` → "Managing the background service (macOS launchd)" for the full user-facing explanation and generic plist template.
+See `README.md` for full details.
 
 ## Pitfalls
 
@@ -150,7 +157,7 @@ See `README.md` → "Managing the background service (macOS launchd)" for the fu
 - **Provider PATH:** background `launchd` jobs need explicit `PATH` including `~/.grok/bin` etc.
 - **Whisper model:** default is multilingual `ggml-base.bin`; downloads on first voice note
 - **Session picker limit:** 10 sessions for `/sessions`, 10 for voice picker (`VOICE_SESSION_LIST_LIMIT`)
-- **Service control:** always use `launchctl load/unload`, never raw kill on the PID (see section above)
+- **Service control:** use `disable` + `bootout` to keep it off after reboot; `load`/`unload` is only temporary. Never raw kill the PID.
 
 ## Search keywords
 

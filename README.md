@@ -182,46 +182,71 @@ HeyAgent is commonly run as a persistent background service via macOS `launchd`.
 - **Plist**: `~/Library/LaunchAgents/com.heyagent.bridge.plist`
 - **Logs**: `~/.heyagent/logs/service-stdout.log` and `service-stderr.log`
 
-### Start / stop / restart commands
+### Important: reboot / login behavior
+
+The plist contains `<key>RunAtLoad</key><true/>`.  
+As long as the plist file exists in `~/Library/LaunchAgents/`, macOS launchd will automatically load it at login (and after a reboot). Combined with `KeepAlive: true`, the service will start again.
+
+- `launchctl load` / `unload` only affect the **current session**.
+- After a reboot the service will come back **unless** it is explicitly disabled.
+
+### Start / stop for current session
 
 **Always use `launchctl` to control the service.**  
 Directly killing the node process (`kill` / `pkill`) will **not** stop it for long — the plist has `KeepAlive: true`, so launchd will immediately respawn it.
 
 ```bash
-# Start / enable the bridge
+# Start for this session only
 launchctl load ~/Library/LaunchAgents/com.heyagent.bridge.plist
 
-# Stop / disable the bridge (clean shutdown)
+# Stop for this session only
 launchctl unload ~/Library/LaunchAgents/com.heyagent.bridge.plist
 
-# Restart the service (if already loaded)
+# Restart (if running)
 launchctl kickstart -k gui/$(id -u)/com.heyagent.bridge
+```
+
+### Persistently turn off (stays off after reboot)
+
+```bash
+launchctl bootout gui/$(id -u)/com.heyagent.bridge 2>/dev/null || true
+launchctl disable gui/$(id -u)/com.heyagent.bridge
+```
+
+### Turn back on persistently
+
+```bash
+launchctl enable gui/$(id -u)/com.heyagent.bridge
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.heyagent.bridge.plist
 ```
 
 ### Check status + verify
 
 ```bash
-# Job in launchd?
-launchctl list | grep -E 'hey|bridge' || echo "no hey/bridge job"
-launchctl list com.heyagent.bridge
+# Is it disabled (survives reboot)?
+launchctl print-disabled gui/$(id -u) | grep -E 'heyagent|bridge' || echo "not explicitly disabled"
 
-# Running process?
-ps -eo pid,ppid,lstart,command | grep -E '[n]ode .*/\.local/bin/hey ' || echo "no heyagent process"
+# Currently loaded/running?
+launchctl list | grep -E 'hey|bridge' || echo "no job"
+launchctl list com.heyagent.bridge 2>/dev/null || echo "job not loaded"
 
-# Live logs
+ps -eo pid,ppid,lstart,command | grep -E '[n]ode .*/\.local/bin/hey ' || echo "no process"
+
+# Logs
 tail -f ~/.heyagent/logs/service-stdout.log
 ```
 
 ### AI agents / automation
 
-When the user asks things like:
+When the user asks things like "start heyagent", "turn heyagent back on", "stop heyagent", "turn the bridge off", etc.:
 
-- "start heyagent", "turn heyagent back on", "start the bridge", "start the Telegram link"
-- "stop heyagent", "turn heyagent off", "stop the bridge"
+- Use the **persistent** commands (`disable` + `bootout` to turn off, `enable` + `bootstrap` to turn on) so the state survives reboot.
+- Always verify with the check commands.
+- Report clearly, including whether it is disabled.
 
-→ Run the matching `load` / `unload` command above **and verify** the result. Report back clearly (e.g. "heyagent bridge is now running (PID 12345)" or "stopped, no job/process").
+`load`/`unload` are only for temporary session control.
 
-The generic plist template (for other machines/users) is included below for reference.
+The generic plist template is included below for reference.
 
 ### Generic plist template (for other setups)
 
