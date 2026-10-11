@@ -1,3 +1,5 @@
+> **Gearchiveerd (2026-10-11).** Deze fork van Appfabriek draait nergens meer. Het idee (je agent bereiken vanaf je telefoon) leeft verder in [Agent Talk To Me](https://agenttalktome.com) en [agentlink](https://github.com/appfabriek/agentlink).
+
 # HeyAgent
 
 **Talk to Claude Code, Codex, or Grok from Telegram — fully local, no server required.**
